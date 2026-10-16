@@ -51,6 +51,20 @@ fn finish_clipboard_paste(
     paste_result
 }
 
+fn perform_clipboard_paste(
+    paste_delay_ms: u64,
+    paste_delay_after_ms: u64,
+    prepare: impl FnOnce() -> Result<(), String>,
+    send_keys: impl FnOnce() -> Result<(), String>,
+    restore_clipboard: impl FnOnce(),
+) -> Result<(), String> {
+    let paste_result = prepare().and_then(|()| {
+        std::thread::sleep(Duration::from_millis(paste_delay_ms));
+        send_keys()
+    });
+    finish_clipboard_paste(paste_result, paste_delay_after_ms, restore_clipboard)
+}
+
 /// Pastes text using the clipboard: saves current content, writes text, sends paste keystroke, restores clipboard.
 fn paste_via_clipboard(
     text: &str,
@@ -58,7 +72,15 @@ fn paste_via_clipboard(
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
     paste_delay_after_ms: u64,
+    #[cfg(target_os = "macos")] screen_sharing: Option<&crate::screen_sharing::ScreenSharingTarget>,
 ) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let (paste_delay_ms, paste_delay_after_ms) = if screen_sharing.is_some() {
+        crate::screen_sharing::paste_delays(paste_delay_ms, paste_delay_after_ms)
+    } else {
+        (paste_delay_ms, paste_delay_after_ms)
+    };
+
     let clipboard = app_handle.clipboard();
     let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
     // Only probe for an image when there is no text to restore. Text is by far the
@@ -73,48 +95,80 @@ fn paste_via_clipboard(
     // Write text to clipboard first
     write_text_to_clipboard(app_handle, text)?;
 
-    std::thread::sleep(Duration::from_millis(paste_delay_ms));
+    #[cfg(target_os = "macos")]
+    let pasteboard_revision = objc2_app_kit::NSPasteboard::generalPasteboard().changeCount();
 
-    // Capture key injection errors so the original clipboard is restored before
-    // propagating them to the caller.
-    let paste_result = (|| -> Result<(), String> {
-        // Send paste key combo
-        #[cfg(target_os = "linux")]
-        let key_combo_sent = try_send_key_combo_linux(paste_method)?;
+    // Both transfer and key injection failures must restore the local clipboard.
+    perform_clipboard_paste(
+        paste_delay_ms,
+        paste_delay_after_ms,
+        || {
+            #[cfg(target_os = "macos")]
+            if let Some(target) = screen_sharing {
+                target.send_clipboard()?;
+            }
+            Ok(())
+        },
+        || {
+            #[cfg(target_os = "macos")]
+            if let Some(target) = screen_sharing {
+                target.ensure_focused()?;
+                if objc2_app_kit::NSPasteboard::generalPasteboard().changeCount()
+                    != pasteboard_revision
+                {
+                    return Err(
+                        "Clipboard changed before Screen Sharing could paste the transcription"
+                            .into(),
+                    );
+                }
+            }
+            // Send paste key combo
+            #[cfg(target_os = "linux")]
+            let key_combo_sent = try_send_key_combo_linux(paste_method)?;
 
-        #[cfg(not(target_os = "linux"))]
-        let key_combo_sent = false;
+            #[cfg(not(target_os = "linux"))]
+            let key_combo_sent = false;
 
-        // Fall back to enigo if no native tool handled it
-        if !key_combo_sent {
-            with_enigo(app_handle, |enigo| match paste_method {
-                // The legacy path cannot detect a mistimed chord, so it keeps the
-                // conservative 100ms modifier hold.
-                PasteMethod::CtrlV => input::send_paste_ctrl_v(enigo, 100),
-                PasteMethod::CtrlShiftV => input::send_paste_ctrl_shift_v(enigo, 100),
-                PasteMethod::ShiftInsert => input::send_paste_shift_insert(enigo, 100),
-                _ => Err("Invalid paste method for clipboard paste".into()),
-            })?;
-        }
+            // Fall back to enigo if no native tool handled it
+            if !key_combo_sent {
+                with_enigo(app_handle, |enigo| match paste_method {
+                    // The legacy path cannot detect a mistimed chord, so it keeps the
+                    // conservative 100ms modifier hold.
+                    PasteMethod::CtrlV => input::send_paste_ctrl_v(enigo, 100),
+                    PasteMethod::CtrlShiftV => input::send_paste_ctrl_shift_v(enigo, 100),
+                    PasteMethod::ShiftInsert => input::send_paste_shift_insert(enigo, 100),
+                    _ => Err("Invalid paste method for clipboard paste".into()),
+                })?;
+            }
 
-        Ok(())
-    })();
-
-    finish_clipboard_paste(paste_result, paste_delay_after_ms, || {
-        // Restore original clipboard content even when key injection failed.
-        // Text takes priority so this path stays identical to the previous behavior;
-        // an image is only restored when the clipboard held no text at all, which is
-        // the case that used to silently wipe screenshots.
-        if let Some(clipboard_content) = saved_text {
-            let _ = write_text_to_clipboard(app_handle, &clipboard_content);
-        } else if let Some(image) = saved_image {
-            info!("Restoring image to clipboard");
-            let _ = clipboard.write_image(&image);
-        } else {
-            // Nothing was there to begin with — don't leave the transcription behind.
-            let _ = clipboard.clear();
-        }
-    })
+            Ok(())
+        },
+        || {
+            // Remote paste waits longer. Never overwrite something the user copied
+            // while we were waiting (including a copy from the remote Mac).
+            #[cfg(target_os = "macos")]
+            if screen_sharing.is_some()
+                && objc2_app_kit::NSPasteboard::generalPasteboard().changeCount()
+                    != pasteboard_revision
+            {
+                info!("[screen-sharing] clipboard changed; leaving it untouched");
+                return;
+            }
+            // Restore original clipboard content even when key injection failed.
+            // Text takes priority so this path stays identical to the previous behavior;
+            // an image is only restored when the clipboard held no text at all, which is
+            // the case that used to silently wipe screenshots.
+            if let Some(clipboard_content) = saved_text {
+                let _ = write_text_to_clipboard(app_handle, &clipboard_content);
+            } else if let Some(image) = saved_image {
+                info!("Restoring image to clipboard");
+                let _ = clipboard.write_image(&image);
+            } else {
+                // Nothing was there to begin with — don't leave the transcription behind.
+                let _ = clipboard.clear();
+            }
+        },
+    )
 }
 
 /// Attempts to send a key combination using Linux-native tools.
@@ -777,6 +831,18 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let paste_delay_ms = settings.paste_delay_ms;
     let paste_delay_after_ms = settings.paste_delay_after_ms;
 
+    #[cfg(target_os = "macos")]
+    let screen_sharing = if matches!(paste_method, PasteMethod::CtrlV | PasteMethod::CtrlShiftV) {
+        crate::screen_sharing::ScreenSharingTarget::frontmost()?
+    } else {
+        None
+    };
+
+    #[cfg(target_os = "macos")]
+    let reliable_paste = settings.reliable_paste && screen_sharing.is_none();
+    #[cfg(target_os = "windows")]
+    let reliable_paste = settings.reliable_paste;
+
     // Append trailing space if setting is enabled
     let text = if settings.append_trailing_space {
         format!("{} ", text)
@@ -809,7 +875,9 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
             // clipboard handling) asynchronously; on failure fall through to
             // the legacy path untouched.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            if settings.reliable_paste {
+            // A read by the local VNC client does not confirm a remote paste.
+            // Screen Sharing uses eager data and a network grace period instead.
+            if reliable_paste {
                 let reliable_result = with_enigo(&app_handle, |enigo| {
                     crate::paste_tx::try_reliable_paste(
                         &text,
@@ -834,6 +902,8 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
                 &paste_method,
                 paste_delay_ms,
                 paste_delay_after_ms,
+                #[cfg(target_os = "macos")]
+                screen_sharing.as_ref(),
             )?
         }
         PasteMethod::ExternalScript => {
@@ -849,6 +919,10 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     if should_send_auto_submit(settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         if let Err(error) = with_enigo(&app_handle, |enigo| {
+            #[cfg(target_os = "macos")]
+            if let Some(target) = &screen_sharing {
+                target.ensure_focused()?;
+            }
             send_return_key(enigo, settings.auto_submit_key)
         }) {
             log::warn!("Paste succeeded, but auto-submit failed: {error}");
@@ -866,7 +940,60 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn clipboard_transfer_completes_before_keys_and_restore() {
+        let events = RefCell::new(Vec::new());
+        let result = perform_clipboard_paste(
+            0,
+            0,
+            || {
+                events.borrow_mut().push("transfer");
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("paste");
+                Ok(())
+            },
+            || events.borrow_mut().push("restore"),
+        );
+        assert!(result.is_ok());
+        assert_eq!(*events.borrow(), ["transfer", "paste", "restore"]);
+    }
+
+    #[test]
+    fn failed_remote_transfer_restores_clipboard_without_sending_keys() {
+        let keys_sent = Cell::new(false);
+        let restored = Cell::new(false);
+        let result = perform_clipboard_paste(
+            0,
+            0,
+            || Err("remote clipboard unavailable".into()),
+            || {
+                keys_sent.set(true);
+                Ok(())
+            },
+            || restored.set(true),
+        );
+        assert_eq!(result, Err("remote clipboard unavailable".into()));
+        assert!(!keys_sent.get());
+        assert!(restored.get());
+    }
+
+    #[test]
+    fn lost_remote_focus_restores_clipboard_and_propagates_the_error() {
+        let restored = Cell::new(false);
+        let result = perform_clipboard_paste(
+            0,
+            0,
+            || Ok(()),
+            || Err("target lost focus".into()),
+            || restored.set(true),
+        );
+        assert_eq!(result, Err("target lost focus".into()));
+        assert!(restored.get());
+    }
 
     #[cfg(target_os = "linux")]
     const YDOTOOL_0_1_8_HELP: &str = r#"

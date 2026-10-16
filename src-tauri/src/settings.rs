@@ -1259,11 +1259,14 @@ fn apply_settings_migrations(
 
 /// Update checks are forced off (without touching the persisted setting) when
 /// `HANDY_DISABLE_UPDATER` is set — e.g. by the Nix package, since self-update
-/// can't work against an immutable /nix/store install.
+/// can't work against an immutable /nix/store install. Custom distributions can
+/// also disable them at build time with the `disable-updater` feature.
 pub fn update_checks_forced_disabled() -> bool {
     use std::sync::OnceLock;
     static IS_UPDATER_DISABLED: OnceLock<bool> = OnceLock::new();
-    *IS_UPDATER_DISABLED.get_or_init(|| utils::env_flag_enabled("HANDY_DISABLE_UPDATER"))
+    *IS_UPDATER_DISABLED.get_or_init(|| {
+        cfg!(feature = "disable-updater") || utils::env_flag_enabled("HANDY_DISABLE_UPDATER")
+    })
 }
 
 /// Effective updater state: the user's stored preference, overridden to `false`
@@ -1309,6 +1312,17 @@ pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "disable-updater")]
+    #[test]
+    fn distribution_disables_updates_without_changing_preferences() {
+        let mut settings = get_default_settings();
+        settings.update_checks_enabled = true;
+
+        assert!(update_checks_forced_disabled());
+        assert!(!update_checks_effectively_enabled(&settings));
+        assert!(settings.update_checks_enabled);
+    }
 
     #[test]
     fn stored_binding_returns_the_requested_binding() {

@@ -18,6 +18,8 @@ mod memory;
 mod overlay;
 mod paste_tx;
 pub mod portable;
+#[cfg(target_os = "macos")]
+mod screen_sharing;
 mod secure_input;
 mod settings;
 mod shortcut;
@@ -28,7 +30,7 @@ mod tray_i18n;
 mod utils;
 
 pub use cli::CliArgs;
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, dev))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
 pub use utils::env_flag_enabled;
@@ -775,11 +777,14 @@ pub fn run(cli_args: CliArgs) {
             managers::transcription::StreamPhaseEvent,
         ]);
 
-    #[cfg(debug_assertions)] // <- Only export on non-release builds
+    // Packaged debug builds also enable debug_assertions, but must not write
+    // development files at startup (Finder may launch them with cwd = "/").
+    // Tauri's `dev` cfg distinguishes development from bundled builds.
+    #[cfg(all(debug_assertions, dev))]
     specta_builder
         .export(
             Typescript::default().bigint(BigIntExportBehavior::Number),
-            "../src/bindings.ts",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/bindings.ts"),
         )
         .expect("Failed to export typescript bindings");
 

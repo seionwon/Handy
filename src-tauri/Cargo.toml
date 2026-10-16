@@ -7,6 +7,10 @@ edition = "2021"
 license = "MIT"
 default-run = "handy"
 
+[features]
+# Custom distributions must not replace themselves with upstream binaries.
+disable-updater = []
+
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
 

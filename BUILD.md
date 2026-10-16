@@ -101,6 +101,40 @@ bun run tauri build
 
 This compiles a release binary and generates platform-specific bundles (deb, rpm, AppImage on Linux; dmg on macOS; msi on Windows).
 
+### macOS Screen Sharing distribution (Universal)
+
+To package this modified build for both Apple Silicon and Intel Macs, install
+CMake and both Rust targets, then run the packaging script from the repository:
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+bun scripts/build-macos-share.ts
+```
+
+With full Xcode installed, select it for this command without changing the
+system-wide developer directory:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bun scripts/build-macos-share.ts
+```
+
+The release DMG, SHA-256 checksum and Korean installation guide are written to
+`src-tauri/target/share/`. The DMG contains `Handy.app`, an Applications shortcut,
+the guide and the MIT license; personal settings, recordings and downloaded
+speech models are not copied. Existing DMGs are not overwritten; move an old
+installer aside before rebuilding the same version.
+If this script already completed the app build and only the DMG packaging needs
+retrying, use `bun scripts/build-macos-share.ts --package-only`. This reuses the
+existing app unchanged; do not use it to pick up source/configuration changes.
+
+This distribution targets macOS 11.0+, uses ad-hoc signing (not Apple Developer
+ID signing or notarization), and requires recipients to approve the app in
+Privacy & Security on first launch. See the included `INSTALL-KO.txt` and
+[Apple's instructions](https://support.apple.com/ko-kr/102445). It retains Handy's
+bundle identifier/settings location and replaces, rather than coexists with,
+the official app. The `disable-updater` Cargo feature prevents upstream updates
+from replacing the Screen Sharing changes, without modifying saved preferences.
+
 ## Linux Install (from source)
 
 The raw binary (`src-tauri/target/release/handy`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.

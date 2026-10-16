@@ -272,6 +272,16 @@ Do not use `gpg` for these `.sig` files.
 
 ## Troubleshooting
 
+### Dictation into a Mac over Screen Sharing
+
+Run Handy on your local Mac and select **Settings → Advanced → Paste Method → Clipboard (Cmd+V)**. In Apple's **Screen Sharing** app, connect to the remote Mac in Control Mode, click the remote text field, and use Handy's recording shortcut. Handy needs its usual macOS Accessibility permission.
+
+Handy detects the foreground Screen Sharing app, uses **Edit → Send Clipboard** when available (or the checked **Edit → Use Shared Clipboard** option), waits for the transfer, and sends the paste shortcut. Text travels through the clipboard, including Korean and other Unicode text. If neither clipboard option is available, Handy reports a paste failure; the transcription remains in History.
+
+Screen Sharing uses a minimum **500 ms before pasting** and **1,500 ms before restoring the clipboard**. Increase **Paste Delay (Before/After)** in Debug (`Cmd+Shift+D`) for slower connections. These are timing allowances, not an acknowledgement from the remote Mac. The experimental Reliable Paste path is bypassed for Screen Sharing because a local clipboard read does not confirm a remote paste. Keep the same remote window focused until insertion finishes.
+
+This integration targets Apple's Screen Sharing client connected to another Mac. Other VNC clients and remote operating systems are not covered.
+
 ### Previous Clipboard Content Is Pasted Instead of the Transcription
 
 If the transcription is correct in **History** but Handy inserts text you copied earlier, see [issue #502](https://github.com/cjpais/Handy/issues/502). With the standard clipboard paste method, Handy restores your previous clipboard after a fixed delay. Under load, the receiving application may read the clipboard only after that restoration.

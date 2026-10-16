@@ -1,6 +1,12 @@
 fn main() {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    build_apple_intelligence_bridge();
+    // Build scripts run on the host. A Universal build on Apple Silicon also
+    // builds an Intel slice, which must not link the arm64-only Swift bridge.
+    #[cfg(target_os = "macos")]
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
+        && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64")
+    {
+        build_apple_intelligence_bridge();
+    }
 
     generate_tray_translations();
 
@@ -367,7 +373,7 @@ fn escape_string(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 fn build_apple_intelligence_bridge() {
     use std::env;
     use std::path::{Path, PathBuf};
@@ -551,7 +557,7 @@ fn build_apple_intelligence_bridge() {
 /// FoundationModelsMacros plugin, so the Apple Intelligence Swift path cannot
 /// compile (issue #1448). On any error we conservatively return false so the
 /// existing SDK-presence check decides.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 fn is_command_line_tools_only() -> bool {
     use std::process::Command;
 
