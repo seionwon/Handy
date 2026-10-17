@@ -77,9 +77,12 @@ This guide covers how to set up the development environment and build Handy from
 ### 1. Clone the Repository
 
 ```bash
-git clone git@github.com:cjpais/Handy.git
+git clone https://github.com/seionwon/Handy.git
 cd Handy
 ```
+
+This repository contains the Screen Sharing fork. The original project is
+[cjpais/Handy](https://github.com/cjpais/Handy).
 
 ### 2. Install Dependencies
 
