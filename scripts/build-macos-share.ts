@@ -2,9 +2,18 @@
 // To repackage the app from a completed build: add --package-only.
 // Add --arm64-only for Apple Silicon; the default builds both Mac architectures.
 // Requires Bun, Rust targets, CMake and Xcode/Command Line Tools.
-import { chmod, copyFile, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  rm,
+  rmdir,
+  symlink,
+} from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { prepareMacosBuildOutput } from "./macos-build-layout";
+import { signWithLocalIdentity } from "./macos-local-signing";
 
 if (process.platform !== "darwin") {
   throw new Error("The macOS installer must be built on macOS.");
@@ -28,6 +37,11 @@ const shareConfig = await Bun.file(
 ).json();
 const signingIdentity = process.env.HANDY_MACOS_SIGNING_IDENTITY?.trim();
 if (signingIdentity) {
+  if (signingIdentity === "-") {
+    throw new Error(
+      "Ad-hoc signing changes Handy's privacy identity on every rebuild. Select a certificate or use the persistent local signing default.",
+    );
+  }
   shareConfig.bundle.macOS.signingIdentity = signingIdentity;
 }
 const output = join(root, "src-tauri/target/share");
@@ -110,13 +124,38 @@ await run([
   "-verify_arch",
   ...(arm64Only ? ["arm64"] : ["arm64", "x86_64"]),
 ]);
+if (!signingIdentity) await signWithLocalIdentity(root, app);
+else if (packageOnly) {
+  await run([
+    "/usr/bin/codesign",
+    "--force",
+    "--sign",
+    signingIdentity,
+    "--options",
+    "runtime",
+    "--entitlements",
+    join(root, "src-tauri/Entitlements.plist"),
+    app,
+  ]);
+}
 await run(["codesign", "--verify", "--deep", "--strict", app]);
+const finalRequirement = Bun.spawnSync(["/usr/bin/codesign", "-d", "-r-", app]);
+const requirementText =
+  finalRequirement.stdout.toString() + finalRequirement.stderr.toString();
+if (
+  finalRequirement.exitCode !== 0 ||
+  !requirementText.includes("certificate") ||
+  !requirementText.includes("com.pais.handy")
+) {
+  throw new Error(
+    "Refusing to distribute Handy without a certificate-bound signing identity.",
+  );
+}
 
 await mkdir(output, { recursive: true });
 const stagingRoot = join(output, ".staging.noindex");
 await mkdir(stagingRoot, { recursive: true });
 const staging = await mkdtemp(join(stagingRoot, "Handy-"));
-const intermediate = `${staging}.hfs.dmg`;
 try {
   // mkdtemp defaults to 0700; the image root must be readable by other users too.
   await chmod(staging, 0o755);
@@ -136,26 +175,75 @@ try {
   );
   // The installer volume is temporary; index the installed Applications copy.
   await Bun.write(join(staging, ".metadata_never_index"), "");
+  await Bun.write(
+    join(staging, ".handy-installer.json"),
+    JSON.stringify({ identifier: "com.pais.handy", installer_format: 1 }),
+  );
   await run([
     "hdiutil",
-    "makehybrid",
-    "-hfs",
-    "-hfs-volume-name",
-    "Handy Screen Sharing",
-    "-o",
-    intermediate,
+    "create",
+    "-srcfolder",
     staging,
-  ]);
-  await run([
-    "hdiutil",
-    "convert",
-    intermediate,
+    "-volname",
+    "Handy Screen Sharing",
+    "-fs",
+    "APFS",
     "-format",
     "UDZO",
     "-o",
     destination,
   ]);
   await run(["hdiutil", "verify", destination]);
+
+  // Verify the actual mounted filesystem and the copied app, not just the
+  // staging signature or image checksum. HFS makehybrid added FinderInfo to
+  // every path, which invalidated an otherwise correctly signed app.
+  const verificationMount = await mkdtemp(join(stagingRoot, "verify-volume-"));
+  const verificationCopy = await mkdtemp(join(stagingRoot, "verify-copy-"));
+  let attached = false;
+  try {
+    await run([
+      "hdiutil",
+      "attach",
+      "-readonly",
+      "-nobrowse",
+      "-mountpoint",
+      verificationMount,
+      destination,
+    ]);
+    attached = true;
+    await run([
+      "codesign",
+      "--verify",
+      "--deep",
+      "--strict",
+      join(verificationMount, "Handy.app"),
+    ]);
+    await run([
+      "ditto",
+      join(verificationMount, "Handy.app"),
+      join(verificationCopy, "Handy.app"),
+    ]);
+    await run([
+      "codesign",
+      "--verify",
+      "--deep",
+      "--strict",
+      join(verificationCopy, "Handy.app"),
+    ]);
+  } finally {
+    for (const directory of [verificationCopy, verificationMount]) {
+      Bun.spawnSync([
+        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+        "-u",
+        join(directory, "Handy.app"),
+      ]);
+    }
+    if (attached) await run(["hdiutil", "detach", verificationMount]);
+    await rm(verificationCopy, { recursive: true, force: true });
+    // Never recursively delete a mount point if image detachment failed.
+    await rmdir(verificationMount);
+  }
 
   const digest = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(destination).arrayBuffer())
@@ -165,8 +253,24 @@ try {
     join(root, "packaging/macos/INSTALL-KO.txt"),
     join(output, "INSTALL-KO.txt"),
   );
+  // Keep the verified installer as the distributable artifact. A second app
+  // bundle in Cargo output can be registered in app search even in .noindex.
+  const unregister = Bun.spawnSync([
+    "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+    "-u",
+    app,
+  ]);
+  if (unregister.exitCode !== 0)
+    console.warn(
+      "Could not unregister the generated Handy app before removing its build copy.",
+    );
+  await rm(app, { recursive: true });
   console.log(`\nShare this installer: ${destination}\nSHA-256: ${digest}`);
 } finally {
+  Bun.spawnSync([
+    "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+    "-u",
+    join(staging, "Handy.app"),
+  ]);
   await rm(staging, { recursive: true, force: true });
-  await rm(intermediate, { force: true });
 }

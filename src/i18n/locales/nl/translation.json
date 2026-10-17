@@ -87,7 +87,9 @@
         "checkFailed": "Machtigingen controleren mislukt. Probeer het opnieuw.",
         "requestFailed": "Machtiging aanvragen mislukt. Probeer het opnieuw.",
         "initializeFailed": "Sneltoetsen en tekstinvoer konden niet worden gestart. Controleer de machtigingen van Handy in Systeeminstellingen en probeer het opnieuw."
-      }
+      },
+      "recheck": "Opnieuw controleren",
+      "restart": "Handy herstarten"
     }
   },
   "modelSelector": {

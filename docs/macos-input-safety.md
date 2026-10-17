@@ -15,17 +15,21 @@
 
 ## 기존 Handy 항목과 승인 유지
 
-기존 Handy 항목은 삭제하지 않고 켜 둔다. Handy는 [AXIsProcessTrusted](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted)로 현재 프로세스의 실제 승인을 확인하고 유효한 권한을 그대로 사용한다. 앱을 완전히 종료하고 DMG를 추출한 다음 `/Applications/Handy.app`을 실행하면 다른 빌드 사본을 실행하는 혼동을 줄일 수 있다.
+Handy는 [AXIsProcessTrusted](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted)로 현재 프로세스의 실제 승인을 확인하고 유효한 권한을 그대로 사용한다. 2026-10-17 실제 설치본의 시스템 로그에서 `Failed to match existing code requirement`가 손쉬운 사용과 마이크 서비스에 대해 발생했다. 저장된 이전 빌드의 코드 해시와 실행 중인 새 빌드의 코드 해시가 달랐고, 권한 화면이 다음 단계로 넘어가지 않는 원인이었다. 단순히 권한 확인 UI를 바꾸는 이전 수정으로는 이 원인이 해결되지 않았다.
 
-권한 목록에 항목이 있다는 사실과 현재 실행 파일에 승인이 있다는 사실은 다르다. 이 환경의 임시 서명은 코드 해시를 식별 조건으로 사용한다. 수정 빌드마다 그 값이 달라질 수 있어, 예전 항목이 켜져 있어도 macOS가 현재 앱을 거부할 수 있다. 이 경우 앱이 기존 승인을 강제로 재사용할 수는 없으며 현재 버전의 승인이 필요하다. [Apple의 지정 요구사항 설명](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)을 참고한다.
+권한 목록에 항목이 있다는 사실과 현재 실행 파일에 승인이 있다는 사실은 다르다. 이전 배포본의 임시 서명은 코드 해시를 식별 조건으로 사용한다. 수정 빌드마다 그 값이 달라질 수 있어, 예전 항목이 켜져 있어도 macOS가 현재 앱을 거부할 수 있다. 이 경우 앱이 기존 승인을 강제로 재사용할 수는 없으며 현재 버전의 승인이 필요하다. [Apple의 지정 요구사항 설명](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)을 참고한다.
 
-배포 스크립트에 기존 인증서를 지정하는 `HANDY_MACOS_SIGNING_IDENTITY` 옵션을 추가했다. 이후에도 같은 서명 신원을 유지하기 위한 옵션이며, 과거 임시 서명을 같은 신원으로 바꾸는 기능은 아니다. 현재 환경에는 사용할 수 있는 서명 인증서가 없어 제공하는 로컬 빌드는 여전히 임시 서명이다. 코드는 TCC 데이터베이스를 수정하거나 권한을 자동 초기화하지 않는다.
+0.9.9부터 배포 스크립트의 기본값은 같은 로컬 인증서를 계속 사용하는 방식이다. 전용 키체인은 `~/Library/Application Support/HandyBuildSigning/`에 0700 권한으로 보관하고 암호 파일은 0600으로 제한한다. 암호는 명령 인자가 아닌 표준 입력으로 전달하며, 일회용 개인키·PKCS#12 파일을 정리하고 서명 후 키체인을 잠근다. 기본 키체인 검색 목록을 유지하고 시스템 신뢰 루트를 추가하지 않는다. 이미 보유한 인증서를 쓰는 `HANDY_MACOS_SIGNING_IDENTITY` 옵션도 유지한다. CI에서 매번 새 신원을 생성하는 동작과 임시 서명 배포는 거부한다. [Apple의 서명 신원·지정 요구사항 설명](https://developer.apple.com/library/archive/technotes/tn2206/)을 따른다.
+
+이전 임시 서명에서 고정 인증서로 넘어오는 시점에는 새 신원에 대한 승인이 한 번 필요하다. **Handy를 완전히 종료한 상태에서 기존 Handy 항목을 한 번 껐다 켜고 `/Applications/Handy.app`을 실행**해 갱신한다. 기존 항목을 삭제하거나 TCC 데이터베이스를 초기화하지 않는다. 권한 화면에 ‘권한 다시 확인’과 정상 재시작 버튼을 추가했고, 작은 창에서도 복구 안내와 버튼에 접근하도록 스크롤을 지원한다. 실제 사용자의 승인 이후 다음 단계로 넘어가는 최종 확인은 사용자 조작이 필요하다.
 
 ## 앱 검색의 중복 아이콘
 
-작업 폴더에서 일반 빌드 사본과 배포 준비 사본을 확인했다. 설치본과 이름·번들 ID가 같아 검색 중복의 원인이 될 수 있다. 빌드 트리는 `src-tauri/target.noindex/`로 옮기고 기존 `target` 경로는 심볼릭 링크로 유지했다. 앞으로 개발·배포 빌드도 이 경로를 사용한다. DMG 임시 사본은 검색 제외 폴더에 만들고 성공·실패 후 정리한다.
+실제 Mac에 과거 Handy 설치 DMG 3개가 동시에 마운트되어 있었고, 각 볼륨의 앱이 Launch Services에 등록되어 있었다. 세 설치 디스크를 정상 추출하고 해당 앱 등록을 해제했다. 휴지통에 옮겨진 예전 Handy의 등록도 해제했으며 휴지통의 파일은 삭제하지 않았다. 작업 폴더에 남은 배포·빌드용 앱 사본도 정리했다.
 
-기존 사본의 검색 등록 해제는 해당 저장소 경로에만 시도한다. 현재 도구 환경에서는 Launch Services가 `-10814`를 반환해 검색 목록에서 사라졌는지는 확인하지 못했다. 실제 화면에서 설치본 하나가 나오는지는 별도 확인이 필요하다. [정리 명령과 한계](../BUILD.md#duplicate-handy-icons-in-macos-app-search)를 참고한다.
+`.noindex`는 Spotlight 제외에 유용하지만 Launch Services 등록까지 없애지는 못했다. 배포 성공 후에는 생성된 앱 번들을 등록 해제하고 제거해 DMG만 배포한다. 설치된 Handy의 시작 시에는 전용 설치 표시 파일과 앱 번들 ID가 일치하는 읽기 전용 DMG만 정상 추출한다. 쓰기 가능한 이미지·시스템 이미지·다른 앱·표시가 없는 볼륨은 대상에서 제외하고 사용 중인 볼륨을 강제로 추출하지 않는다. [정리 명령과 한계](../BUILD.md#duplicate-handy-icons-in-macos-app-search)를 참고한다.
+
+0.9.9를 `/Applications/Handy.app`에 설치해 실행한 뒤 설치 디스크가 자동 추출되는 것을 실제 로그와 마운트 상태로 확인했다. Spotlight 검색 결과와 Launch Services의 존재하는 앱 경로 모두 설치본 하나만 반환했다.
 
 ## 보안 점검
 
@@ -56,10 +60,14 @@ cargo test --manifest-path src-tauri/vendor/handy-keys/Cargo.toml --lib
 
 macOS 네이티브 빌드는 선택한 Xcode SDK와 Rust 대상 아키텍처에 맞는 환경이 필요하다. 이 환경의 로컬 빌드와 검사에는 `src-tauri/target/build-this-mac.sh` 및 `check-input-fix.sh`의 환경을 사용했다.
 
-권한 재사용·시작 단계 선택·조회 실패 처리·입력 초기화의 중복 방지·조회 취소는 `bun run test:permissions`로 검사한다. 권한 화면의 브라우저 회귀 테스트는 `tests/permissions.spec.ts`에 있으며 기존 설정 카드와 온보딩의 중복 요청 방지·첫 조회 중 버튼 숨김·기존 승인 재사용·포커스 복귀 후 갱신을 포함한다. 모든 네이티브 명령을 모의 처리한다. 현재 실행 환경에서는 로컬 서버 바인딩과 Chrome 실행이 거부되어 브라우저 검사를 완료하지 못했다. 제한이 없는 환경에서는 다음과 같이 실행한다.
+권한 재사용·시작 단계 선택·조회 실패 처리·입력 초기화의 중복 방지·조회 취소는 `bun run test:permissions`로 검사한다. 권한 화면의 브라우저 회귀 테스트 15개를 시스템 Chrome의 독립 프로필에서 실행해 통과했다. 기존 승인 재사용·중복 요청 방지·조회 취소·권한 다시 확인·정상 재시작·680×570 창에서 복구 버튼 접근을 포함하며, 모든 네이티브 명령은 모의 처리한다. 기본 브라우저 설치가 준비된 환경에서는 다음과 같이 실행한다.
 
 ```sh
 bun run test:playwright tests/permissions.spec.ts
 ```
 
 실제 권한 검증 시에는 미등록·기존 승인·기존 거부·앱 교체 뒤 오래된 항목·권한 철회·재시작을 각각 확인하고, 단축키 설정 중 포커스 이동과 빠른 시작/취소도 확인한다.
+
+실제 다른 실행 파일 두 개를 같은 로컬 인증서로 서명해 지정 요구사항이 동일한지, 각 서명의 엄격 검증이 성공하는지, 사용자 키체인 검색 목록이 그대로인지 확인했다. 설치 디스크 선별 테스트 3개와 클립보드·키 해제 관련 Rust 테스트 20개도 통과했다. 이 검증은 실제 OS 권한 승인을 대신하지 않는다.
+
+설치 이미지 검증에서는 별도의 포장 오류도 확인했다. `hdiutil makehybrid -hfs`로 만든 이미지가 파일마다 FinderInfo 속성을 추가해, 원본 앱의 서명은 정상이어도 마운트된 앱의 서명은 실패했다. 이미지를 `hdiutil create`의 압축 APFS 형식으로 바꾸고, 체크섬에 더해 실제 마운트된 앱과 `ditto`로 복사한 앱의 서명을 모두 엄격 검증한다. [Apple의 FinderInfo 관련 설명](https://developer.apple.com/library/archive/qa/qa1940/_index.html)을 참고한다.

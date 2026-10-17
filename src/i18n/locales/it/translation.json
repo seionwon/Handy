@@ -87,7 +87,9 @@
         "checkFailed": "Impossibile verificare i permessi. Riprova.",
         "requestFailed": "Impossibile richiedere il permesso. Riprova.",
         "initializeFailed": "Impossibile avviare le scorciatoie da tastiera e l’inserimento di testo. Controlla i permessi di Handy nelle impostazioni di sistema e riprova."
-      }
+      },
+      "recheck": "Verifica di nuovo",
+      "restart": "Riavvia Handy"
     }
   },
   "modelSelector": {

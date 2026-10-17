@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "@tauri-apps/plugin-os";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   checkAccessibilityPermission,
   checkMicrophonePermission,
@@ -161,6 +162,21 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     }
   };
 
+  const handleRestart = async () => {
+    if (preview || requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+    setRequesting(true);
+    try {
+      await relaunch();
+    } catch (error) {
+      console.error("Failed to restart Handy:", error);
+      toast.error(t("onboarding.permissions.errors.requestFailed"));
+    } finally {
+      requestInFlightRef.current = false;
+      setRequesting(false);
+    }
+  };
+
   const isChecking =
     permissionPlatform === null ||
     (isMacOS &&
@@ -196,98 +212,120 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
   // Show permissions request screen
   return (
-    <div className="relative h-screen w-full flex flex-col p-6 gap-6 items-center justify-center">
-      <div className="absolute top-4 right-4">
-        <QuitButton disabled={preview} />
-      </div>
-      <div className="flex flex-col items-center gap-2">
-        <HandyTextLogo width={200} />
-      </div>
-
-      <div className="max-w-md w-full flex flex-col items-center gap-4">
-        <div className="text-center mb-2">
-          <h2 className="text-xl font-semibold text-text mb-2">
-            {t("onboarding.permissions.title")}
-          </h2>
-          <p className="text-text/70">
-            {t("onboarding.permissions.description")}
-          </p>
+    <div className="h-screen w-full overflow-y-auto">
+      <div className="relative min-h-full w-full flex flex-col p-6 gap-6 items-center justify-center">
+        <div className="absolute top-4 right-4">
+          <QuitButton disabled={preview} />
+        </div>
+        <div className="flex flex-col items-center gap-2">
+          <HandyTextLogo width={200} />
         </div>
 
-        {/* Microphone Permission Card */}
-        {showMicrophonePermission && (
-          <div className="w-full p-4 rounded-lg bg-white/5 border border-mid-gray/20">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-logo-primary/20 shrink-0">
-                <Mic className="w-6 h-6 text-logo-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-medium text-text">
-                  {t("onboarding.permissions.microphone.title")}
-                </h3>
-                <p className="text-sm text-text/60 mb-3">
-                  {t("onboarding.permissions.microphone.description")}
-                </p>
-                {permissions.microphone === "granted" ? (
-                  <div className="flex items-center gap-2 text-emerald-400 text-sm">
-                    <Check className="w-4 h-4" />
-                    {t("onboarding.permissions.granted")}
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleGrantMicrophone}
-                    disabled={requesting}
-                    className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
-                  >
-                    {isWindows || permissions.microphone === "waiting"
-                      ? t("accessibility.openSettings")
-                      : t("onboarding.permissions.grant")}
-                  </button>
-                )}
-              </div>
-            </div>
+        <div className="max-w-md w-full flex flex-col items-center gap-4">
+          <div className="text-center mb-2">
+            <h2 className="text-xl font-semibold text-text mb-2">
+              {t("onboarding.permissions.title")}
+            </h2>
+            <p className="text-text/70">
+              {t("onboarding.permissions.description")}
+            </p>
           </div>
-        )}
 
-        {/* Accessibility Permission Card */}
-        {showAccessibilityPermission && (
-          <div className="w-full p-4 rounded-lg bg-white/5 border border-mid-gray/20">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-logo-primary/20 shrink-0">
-                <Keyboard className="w-6 h-6 text-logo-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-medium text-text">
-                  {t("onboarding.permissions.accessibility.title")}
-                </h3>
-                <p className="text-sm text-text/60 mb-3">
-                  {t("onboarding.permissions.accessibility.description")}
-                </p>
-                {permissions.accessibility === "waiting" && (
+          {/* Microphone Permission Card */}
+          {showMicrophonePermission && (
+            <div className="w-full p-4 rounded-lg bg-white/5 border border-mid-gray/20">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-full bg-logo-primary/20 shrink-0">
+                  <Mic className="w-6 h-6 text-logo-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-text">
+                    {t("onboarding.permissions.microphone.title")}
+                  </h3>
                   <p className="text-sm text-text/60 mb-3">
-                    {t(
-                      "onboarding.permissions.accessibility.existingEntryHint",
-                    )}
+                    {t("onboarding.permissions.microphone.description")}
                   </p>
-                )}
-                {permissions.accessibility === "granted" ? (
-                  <div className="flex items-center gap-2 text-emerald-400 text-sm">
-                    <Check className="w-4 h-4" />
-                    {t("onboarding.permissions.granted")}
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleGrantAccessibility}
-                    disabled={requesting}
-                    className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
-                  >
-                    {t("accessibility.openSettings")}
-                  </button>
-                )}
+                  {permissions.microphone === "granted" ? (
+                    <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                      <Check className="w-4 h-4" />
+                      {t("onboarding.permissions.granted")}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleGrantMicrophone}
+                      disabled={requesting}
+                      className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
+                    >
+                      {isWindows || permissions.microphone === "waiting"
+                        ? t("accessibility.openSettings")
+                        : t("onboarding.permissions.grant")}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Accessibility Permission Card */}
+          {showAccessibilityPermission && (
+            <div className="w-full p-4 rounded-lg bg-white/5 border border-mid-gray/20">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-full bg-logo-primary/20 shrink-0">
+                  <Keyboard className="w-6 h-6 text-logo-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-medium text-text">
+                    {t("onboarding.permissions.accessibility.title")}
+                  </h3>
+                  <p className="text-sm text-text/60 mb-3">
+                    {t("onboarding.permissions.accessibility.description")}
+                  </p>
+                  {permissions.accessibility === "waiting" && (
+                    <p className="text-sm text-text/60 mb-3">
+                      {t(
+                        "onboarding.permissions.accessibility.existingEntryHint",
+                      )}
+                    </p>
+                  )}
+                  {permissions.accessibility === "granted" ? (
+                    <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                      <Check className="w-4 h-4" />
+                      {t("onboarding.permissions.granted")}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={handleGrantAccessibility}
+                      disabled={requesting}
+                      className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
+                    >
+                      {t("accessibility.openSettings")}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {!preview && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setPollingAttempt((attempt) => attempt + 1)}
+                disabled={requesting}
+                className="px-3 py-2 text-sm rounded-lg border border-mid-gray/30 hover:bg-white/5"
+              >
+                {t("onboarding.permissions.recheck")}
+              </button>
+              {permissions.accessibility === "waiting" && (
+                <button
+                  onClick={handleRestart}
+                  disabled={requesting}
+                  className="px-3 py-2 text-sm rounded-lg border border-mid-gray/30 hover:bg-white/5"
+                >
+                  {t("onboarding.permissions.restart")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

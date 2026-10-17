@@ -126,9 +126,15 @@ The release DMG, SHA-256 checksum and Korean installation guide are written to
 the guide and the MIT license; personal settings, recordings and downloaded
 speech models are not copied. Existing DMGs are not overwritten; move an old
 installer aside before rebuilding the same version.
+The packager creates a compressed APFS image, verifies its checksum, mounts it
+read-only, and verifies the code signature both on the mounted app and on a
+`ditto` copy. Do not substitute `hdiutil makehybrid -hfs`: it added FinderInfo
+attributes that invalidated the app signature on the mounted image.
 If this script already completed the app build and only the DMG packaging needs
 retrying, use `bun scripts/build-macos-share.ts --package-only`. This reuses the
-existing app unchanged; do not use it to pick up source/configuration changes.
+existing app and applies the distribution signature; do not use it to pick up
+source changes. After successful packaging the generated app bundle is removed,
+so `--package-only` is for retrying a failed packaging run, before that cleanup.
 For an Apple Silicon installer only, add `--arm64-only` when building or
 repackaging. Its filename ends in `-arm64.dmg`; the default remains Universal.
 
@@ -137,9 +143,12 @@ leave a relative `target` symlink so existing commands keep working. Spotlight
 excludes paths containing `.noindex`; see [Apple's documentation](https://developer.apple.com/documentation/xcode/locating-a-missing-debug-symbol-file).
 DMG staging uses a `.noindex` folder, is removed after packaging (including on
 failure), and includes an indexing exclusion marker for the temporary volume.
+Successful packaging unregisters and removes the generated `.app` as well:
+Launch Services can retain registrations even when Spotlight excludes a path.
+Installed Handy also ejects marked read-only Handy installer volumes on startup.
 
-This distribution targets macOS 11.0+, uses ad-hoc signing (not Apple Developer
-ID signing or notarization), and requires recipients to approve the app in
+This distribution targets macOS 11.0+, uses a persistent local signing certificate
+by default (not Apple Developer ID signing or notarization), and requires recipients to approve the app in
 Privacy & Security on first launch. See the included `INSTALL-KO.txt` and
 [Apple's instructions](https://support.apple.com/ko-kr/102445). It retains Handy's
 bundle identifier/settings location and replaces, rather than coexists with,
@@ -155,9 +164,26 @@ HANDY_MACOS_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun 
 
 The certificate and its private key must already be available to `codesign`.
 This option does not notarize the app or transfer a previous ad-hoc approval.
-`--package-only` preserves the existing app's signature. No valid signing
-identity is available in the current build environment, so the supplied local
-installer still uses an ad-hoc signature.
+Without an external identity, the packager creates a dedicated keychain at
+`~/Library/Application Support/HandyBuildSigning/` and reuses its certificate.
+The directory is private (0700), and its keychain password is stored in a 0600
+file. Passwords go to the helper over stdin. Temporary PEM/PKCS#12 private-key
+files are removed and the dedicated keychain is locked after signing. The user
+keychain search list is preserved; no trust anchors are added. Keep a private
+backup of this directory, never commit or distribute it, and restore it when
+moving the build to another Mac. An incomplete identity causes a build failure
+instead of silently generating a replacement. CI requires a restored identity
+or an explicit signing certificate.
+
+The default designated requirement binds `com.pais.handy` to the certificate,
+so changed binaries signed with this identity remain compatible. An update from
+the previous ad-hoc builds requires one new user approval. Ad-hoc signing with
+`HANDY_MACOS_SIGNING_IDENTITY=-` is rejected. See [Apple's code signing guide](https://developer.apple.com/library/archive/technotes/tn2206/).
+
+On a development Mac, `bun run test:macos-signing` checks two different app
+binaries against one temporary signing identity, rejects an unrelated signer,
+checks private file permissions, and verifies that the user keychain search
+list is unchanged. It does not execute the test apps or change TCC grants.
 
 ## Linux Install (from source)
 
@@ -197,12 +223,19 @@ normally, eject the installer, and reopen `/Applications/Handy.app` to ensure yo
 are using the installed version. Permission checks do not create input listeners,
 request prompts, or reset privacy records.
 
-Local builds default to the ad-hoc `signingIdentity: "-"`. A rebuild can change the
+Older installers and bare Tauri builds use ad-hoc `signingIdentity: "-"`. A rebuild can change the
 code identity even while an old entry remains visibly enabled. If macOS rejects
 the new identity, the app cannot reuse that old approval: the current version
 needs approval in System Settings. Using a consistent signing identity for future
 builds avoids changing to a new ad-hoc identity on every update; see
 [Apple's signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+
+When migrating from an old ad-hoc installer, quit Handy and turn the existing
+Handy entry off and back on, then launch `/Applications/Handy.app`. This refreshes
+approval for the current identity without deleting the entry. The permission
+screen includes Check Again and Restart Handy actions. The distribution packager
+now keeps one local certificate for future builds instead of generating a new
+code-hash identity every time.
 
 For optional diagnosis, compare the designated requirements of the previous and rebuilt
 bundles:
@@ -222,9 +255,11 @@ and stale-permission report.
 ### Duplicate Handy icons in macOS app search
 
 Use the installed `/Applications/Handy.app` and eject the DMG after installation.
-Generated apps now live in `target.noindex`; existing build caches are moved there
-without deleting them. This also prevents accidentally launching a build copy
-with a different signature from the installed app.
+Build caches live in `target.noindex`. Successful packaging removes its generated
+app bundle and staging copies. On installed-app startup, only read-only DMGs with
+our installer marker and Handy bundle ID are eligible for automatic ejection;
+unmarked volumes, writable images and system images are left alone. A busy volume
+is not forcibly ejected. Earlier installers need to be ejected once manually.
 
 If search still shows cached copies generated by this repository, run:
 

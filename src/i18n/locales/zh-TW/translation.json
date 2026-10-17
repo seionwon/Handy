@@ -87,7 +87,9 @@
         "checkFailed": "檢查權限失敗，請重試",
         "requestFailed": "請求權限失敗，請重試",
         "initializeFailed": "無法啟動鍵盤快速鍵和文字輸入。請在系統設定中檢查 Handy 的權限，然後重試。"
-      }
+      },
+      "recheck": "重新檢查",
+      "restart": "重新啟動 Handy"
     }
   },
   "modelSelector": {

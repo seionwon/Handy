@@ -87,7 +87,9 @@
         "checkFailed": "İzinler kontrol edilemedi. Lütfen tekrar deneyin.",
         "requestFailed": "İzin isteği başarısız oldu. Lütfen tekrar deneyin.",
         "initializeFailed": "Klavye kısayolları ve metin girişi başlatılamadı. Sistem Ayarları’nda Handy’nin izinlerini kontrol edip tekrar deneyin."
-      }
+      },
+      "recheck": "Yeniden kontrol et",
+      "restart": "Handy’yi yeniden başlat"
     }
   },
   "modelSelector": {

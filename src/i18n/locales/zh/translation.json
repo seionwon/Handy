@@ -87,7 +87,9 @@
         "checkFailed": "检查权限失败。请重试。",
         "requestFailed": "请求权限失败。请重试。",
         "initializeFailed": "无法启动键盘快捷键和文本输入。请在系统设置中检查 Handy 的权限，然后重试。"
-      }
+      },
+      "recheck": "重新检查",
+      "restart": "重启 Handy"
     }
   },
   "modelSelector": {

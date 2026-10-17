@@ -87,7 +87,9 @@
         "checkFailed": "Kunne ikke tjekke tilladelser. Prøv igen.",
         "requestFailed": "Kunne ikke anmode om tilladelse. Prøv igen.",
         "initializeFailed": "Tastaturgenveje og tekstindtastning kunne ikke startes. Kontrollér Handys tilladelser i Systemindstillinger, og prøv igen."
-      }
+      },
+      "recheck": "Tjek igen",
+      "restart": "Genstart Handy"
     }
   },
   "modelSelector": {

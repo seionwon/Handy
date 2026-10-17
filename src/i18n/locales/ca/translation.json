@@ -87,7 +87,9 @@
         "checkFailed": "No s'han pogut comprovar els permisos. Torneu-ho a provar.",
         "requestFailed": "No s'ha pogut sol·licitar el permís. Torneu-ho a provar.",
         "initializeFailed": "No s’han pogut iniciar les dreceres de teclat ni l’entrada de text. Comproveu els permisos de Handy a la configuració del sistema i torneu-ho a provar."
-      }
+      },
+      "recheck": "Torna a comprovar",
+      "restart": "Reinicia Handy"
     }
   },
   "modelSelector": {

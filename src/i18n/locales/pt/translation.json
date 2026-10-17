@@ -87,7 +87,9 @@
         "checkFailed": "Erro ao verificar permissões. Por favor, tente novamente.",
         "requestFailed": "Erro ao solicitar permissão. Por favor, tente novamente.",
         "initializeFailed": "Não foi possível iniciar os atalhos de teclado e a entrada de texto. Verifique as permissões do Handy nas configurações do sistema e tente novamente."
-      }
+      },
+      "recheck": "Verificar novamente",
+      "restart": "Reiniciar Handy"
     }
   },
   "modelSelector": {

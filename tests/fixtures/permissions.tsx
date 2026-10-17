@@ -32,6 +32,7 @@ mockIPC(async (command) => {
     return state.accessibility;
   }
   if (command.endsWith("check_microphone_permission")) return state.microphone;
+  if (command === "plugin:process|restart") return null;
   if (
     ["open_accessibility_settings", "request_microphone_permission"].includes(
       command,

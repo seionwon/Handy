@@ -87,7 +87,9 @@
         "checkFailed": "Không thể kiểm tra quyền. Vui lòng thử lại.",
         "requestFailed": "Không thể yêu cầu quyền. Vui lòng thử lại.",
         "initializeFailed": "Không thể khởi động phím tắt và nhập văn bản. Hãy kiểm tra quyền của Handy trong Cài đặt hệ thống rồi thử lại."
-      }
+      },
+      "recheck": "Kiểm tra lại",
+      "restart": "Khởi động lại Handy"
     }
   },
   "modelSelector": {

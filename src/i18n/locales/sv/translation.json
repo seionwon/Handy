@@ -87,7 +87,9 @@
         "checkFailed": "Misslyckades med att kontrollera behörigheter. Försök igen.",
         "requestFailed": "Misslyckades med att begära behörighet. Försök igen.",
         "initializeFailed": "Tangentbordsgenvägar och textinmatning kunde inte startas. Kontrollera Handys behörigheter i Systeminställningar och försök igen."
-      }
+      },
+      "recheck": "Kontrollera igen",
+      "restart": "Starta om Handy"
     }
   },
   "modelSelector": {

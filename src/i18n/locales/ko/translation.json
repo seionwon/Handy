@@ -77,8 +77,10 @@
       "accessibility": {
         "title": "손쉬운 사용 / 기기 제어 및 데이터 접근",
         "description": "녹음된 텍스트를 애플리케이션에 입력하기 위해 필요합니다.",
-        "existingEntryHint": "기존 Handy 항목을 삭제하지 말고 켜 둡니다. 목록에 없을 때만 + 버튼으로 /Applications/Handy.app을 추가하세요. 유효한 권한은 그대로 사용합니다. 계속 거부되면 Handy를 종료한 후 설치된 앱을 다시 실행하세요. 앱 서명이 바뀐 경우에는 macOS에서 이 버전의 재승인이 필요할 수 있습니다."
+        "existingEntryHint": "기존 Handy 항목을 삭제할 필요는 없습니다. 업데이트 후 스위치가 켜져 있는데 이 화면이 넘어가지 않으면 Handy를 종료한 상태에서 그 스위치를 한 번 껐다 켜고 /Applications/Handy.app을 다시 실행하세요. macOS가 현재 버전의 앱 신원을 승인해야 합니다. 목록에 없을 때만 + 버튼으로 설치된 앱을 추가하세요."
       },
+      "recheck": "권한 다시 확인",
+      "restart": "Handy 다시 시작",
       "grant": "권한 부여",
       "granted": "승인됨",
       "waiting": "대기 중...",

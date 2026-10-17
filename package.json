@@ -1,7 +1,7 @@
 {
   "name": "handy-app",
   "private": true,
-  "version": "0.9.8",
+  "version": "0.9.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,6 +16,7 @@
     "format:backend": "cd src-tauri && cargo fmt",
     "test:keyboard": "bun src/lib/utils/keyboard.test.ts",
     "test:permissions": "bun src/lib/permissionPolling.test.ts && bun src/lib/inputInitialization.test.ts && bun src/lib/accessibilityPermission.test.ts && bun src/lib/startup.test.ts",
+    "test:macos-signing": "bun scripts/test-macos-signing.ts",
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "check:translations": "bun scripts/check-translations.ts",

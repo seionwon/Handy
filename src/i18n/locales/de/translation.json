@@ -87,7 +87,9 @@
         "checkFailed": "Berechtigungsprüfung fehlgeschlagen. Bitte erneut versuchen.",
         "requestFailed": "Berechtigungsanfrage fehlgeschlagen. Bitte erneut versuchen.",
         "initializeFailed": "Tastenkürzel und Texteingabe konnten nicht gestartet werden. Prüfe Handys Berechtigungen in den Systemeinstellungen und versuche es erneut."
-      }
+      },
+      "recheck": "Erneut prüfen",
+      "restart": "Handy neu starten"
     }
   },
   "modelSelector": {

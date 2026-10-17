@@ -87,7 +87,9 @@
         "checkFailed": "Échec de la vérification des autorisations. Veuillez réessayer.",
         "requestFailed": "Échec de la demande d'autorisation. Veuillez réessayer.",
         "initializeFailed": "Impossible de démarrer les raccourcis clavier et la saisie de texte. Vérifiez les autorisations de Handy dans les réglages système, puis réessayez."
-      }
+      },
+      "recheck": "Vérifier à nouveau",
+      "restart": "Redémarrer Handy"
     }
   },
   "modelSelector": {

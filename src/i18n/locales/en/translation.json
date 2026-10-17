@@ -77,8 +77,10 @@
       "accessibility": {
         "title": "Accessibility / Device Control and Data Access",
         "description": "Required to type transcribed text into your applications.",
-        "existingEntryHint": "Keep the existing Handy entry enabled in System Settings. If it is missing, use + to add /Applications/Handy.app. Handy reuses valid access. If this version is still denied, quit Handy and reopen the installed app. A changed app signature may require macOS to approve this version again."
+        "existingEntryHint": "Keep the existing Handy entry. If it is already enabled but this screen does not advance after an update, quit Handy, turn that entry off and back on, then open /Applications/Handy.app. macOS must approve the current app identity. Add the installed app with + only if it is missing."
       },
+      "recheck": "Check Again",
+      "restart": "Restart Handy",
       "grant": "Grant Permission",
       "granted": "Granted",
       "waiting": "Waiting...",
