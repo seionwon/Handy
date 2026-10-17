@@ -3,9 +3,9 @@
 [한국어 사용 안내](README.ko.md) · [Screen Sharing setup](#mac-to-mac-dictation-over-screen-sharing-vnc) · [Build instructions](BUILD.md)
 
 > [!IMPORTANT]
-> **This revision adds dictation with `Edit → Use Shared Clipboard` kept ON throughout the operation.** Handy invokes Screen Sharing's native **Edit → Paste** action in shared mode. It never toggles the clipboard setting. The OFF mode retains explicit **Send Clipboard** transfers.
+> **0.9.12 replaces the failed shared-mode Paste-menu route while keeping `Edit → Use Shared Clipboard` ON throughout.** Handy briefly activates itself, returns to the same Screen Sharing window to refresh clipboard sharing, waits, and sends `Cmd+V` once. OFF mode retains explicit **Send Clipboard** transfers.
 >
-> **공유 클립보드를 ON으로 유지하는 새 경로를 추가했습니다.** 기존 설치 파일의 OFF 필수 제한을 바꾼 수정으로, **실제 Mac 간 연결 검증은 아직 필요합니다.** 아래의 연속 전사와 일반 복사·붙여넣기 확인 절차를 진행하세요.
+> **0.9.11의 ON 경로는 실제 사용에서 실패했습니다.** 0.9.12는 비활성 Paste 메뉴 대신 같은 원격 세션을 다시 활성화하는 경로를 사용합니다. **이 수정의 실제 원격 입력 성공은 아직 확인되지 않았습니다.**
 
 This repository is an unofficial fork of [cjpais/Handy](https://github.com/cjpais/Handy), with clipboard handoff for Mac-to-Mac Screen Sharing and macOS input/permission fixes. Use a build from this repository to get these changes. The original project and its community are linked below.
 
@@ -23,7 +23,7 @@ Run Handy on the **local Mac where you speak**, then dictate into a text field o
 | --------------------- | --------------------------------------------------------------------------------------- |
 | Local Mac             | This fork of Handy, a downloaded speech model, microphone and Accessibility permissions |
 | Screen Sharing client | Apple's Screen Sharing app, connected to another Mac in **Control Mode**                |
-| Clipboard setting     | **ON** uses native **Paste**; **OFF** uses **Send Clipboard**                           |
+| Clipboard setting     | **ON** refreshes session activation before `Cmd+V`; **OFF** uses **Send Clipboard**     |
 | Handy paste method    | **Settings → Advanced → Paste Method → Clipboard (Cmd+V)**                              |
 | Remote Mac            | A focused text field that accepts ordinary paste                                        |
 
@@ -33,17 +33,17 @@ Run Handy on the **local Mac where you speak**, then dictate into a text field o
 2. Enable Screen Sharing on the remote Mac and connect using the local Mac's Screen Sharing app. See [Apple's Screen Sharing guide](https://support.apple.com/guide/mac-help/mh14066/mac) for connection and Control Mode instructions.
 3. In Handy, select **Settings → Advanced → Paste Method → Clipboard (Cmd+V)**.
 4. Bring the **local Screen Sharing window** to the front. In that app's menu bar, leave **Edit → Use Shared Clipboard checked (ON)** to keep ordinary clipboard sharing available.
-5. Confirm **Edit → Paste** is available with text on the local clipboard. **Send Clipboard may be disabled while sharing is ON; that is expected.** Use a new build from this revision; older installers require OFF.
+5. **Edit → Paste and Send Clipboard may both be disabled with sharing ON.** Version 0.9.12 does not use either menu in shared mode; a disabled Paste item does not mean the remote field cannot accept `Cmd+V`.
 6. Click the destination text field inside the remote desktop. Use Handy's configured recording shortcut, speak, and stop recording.
-7. Keep the same Screen Sharing window and remote text field focused until the text appears. Recheck the clipboard setting after reconnecting or changing sessions.
+7. Wait for text in the same remote field. Handy briefly becomes the active local app and returns to the original Screen Sharing window automatically. If you switch to a different app during this refresh, it cancels the paste.
 
 ### How ON and OFF are handled
 
 The setup this fork addresses can paste the previous remote clipboard even though Handy has written a new transcription to the local clipboard. This is especially visible when you dictate several times without leaving the Screen Sharing window: the first sentence may be repeated instead of the next one.
 
-With sharing **ON**, Handy writes real clipboard data and invokes Screen Sharing's native **Edit → Paste** action, rather than forwarding a separate `Cmd+V`. With sharing **OFF**, Handy requests **Send Clipboard**, waits, and forwards the paste shortcut. Both routes preserve the user's setting throughout the operation and keep Korean and other Unicode text on the clipboard path.
+With sharing **ON**, Handy briefly activates itself without opening a window, writes real clipboard data after observing activation, and returns to the same Screen Sharing window. This causes the client to refresh its shared clipboard promises. After a transfer delay, Handy sends the paste shortcut once. The waits run asynchronously so AppKit can deliver the activation changes. With sharing **OFF**, Handy requests **Send Clipboard**, waits, and sends the shortcut. Both routes preserve the clipboard-sharing setting and keep Korean and other Unicode text on the clipboard path.
 
-The new ON route has automated command-routing tests; its effect on a real remote clipboard still needs Mac-to-Mac validation. A checked sharing menu alone is not treated as proof of transfer. If the selected command is unavailable, focus changes, or the clipboard mode changes mid-operation, Handy reports a paste failure and keeps the transcription in **History**. It never switches sharing OFF, steals focus, or retries a potentially completed native paste.
+The 0.9.11 route failed in actual use: the log showed **Edit > Paste is disabled**, before any paste was sent. Version 0.9.12 removes that dependency. Its activation state-machine tests cannot prove a remote paste succeeded; **live Mac-to-Mac validation of this revision is still pending**. Activation failure, a changed remote window, an intervening copy, cancellation, or a clipboard-mode change stops the operation before paste. Handy does not reactivate Screen Sharing after observing a user switch to another app, change sharing OFF, or retry a potentially completed paste.
 
 ### Verify dictation and ordinary copy/paste
 
@@ -53,15 +53,15 @@ The new ON route has automated command-routing tests; its effect on a real remot
 4. Confirm that the second result contains the new sentence. For Korean, repeat with **“첫 번째 문장입니다.”** and **“두 번째는 다른 내용입니다.”** using a model that supports Korean.
 5. Confirm **Use Shared Clipboard remains ON**, then copy a different piece of text in a local app and paste it into the remote document normally. Repeat dictation afterwards.
 
-Compare each result with History. If shared-mode dictation repeats old text, record both macOS versions, connection type, and whether clicking Screen Sharing's **Edit → Paste** manually behaves differently. See [implementation and validation notes](docs/screen-sharing-clipboard.md). Unit-test success does not confirm receipt by a remote session.
+Compare each result with History. If shared-mode dictation repeats old text, record both macOS versions, connection type, and whether ordinary `Cmd+V` receives fresh text after returning to Screen Sharing. See [implementation and validation notes](docs/screen-sharing-clipboard.md). Unit-test success does not confirm receipt by a remote session.
 
 ### Screen Sharing troubleshooting
 
 | Symptom                                                           | What to check                                                                                                                                                                                                |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The previous sentence repeats                                     | Check you installed the new shared-mode build, compare History, and test **Edit → Paste** manually. Live remote validation remains necessary.                                                                |
-| Send Clipboard is disabled with sharing ON                        | This is expected. Shared mode uses **Edit → Paste**; Send Clipboard is required only with sharing OFF.                                                                                                       |
-| Native Paste is disabled or missing                               | Check **Control Mode**, a focused remote field, a live Mac-to-Mac connection, and Apple's Screen Sharing client.                                                                                             |
+| The previous sentence repeats                                     | Use 0.9.12 or later and compare with History. The new route refreshes the same session before sending `Cmd+V`; live validation is still pending.                                                             |
+| Send Clipboard is disabled with sharing ON                        | This is expected. Shared mode refreshes the session before `Cmd+V`; Send Clipboard is required only with sharing OFF.                                                                                        |
+| Native Paste is disabled or missing                               | The remote canvas can disable this local menu. 0.9.12 does not require it; use a focused field that accepts ordinary `Cmd+V`.                                                                                |
 | History has the new text, but the remote field stays empty        | Check **Clipboard (Cmd+V)**, Handy's Accessibility permission, the focused remote text field, and whether that field accepts a manual paste.                                                                 |
 | Recording does not start                                          | Check Handy's microphone permission, selected microphone, model, and recording shortcut. Test dictation in a local editor first.                                                                             |
 | Permission setup stays on Waiting despite an existing Handy entry | Version 0.9.10 requests native macOS consent for the running app once, rather than only opening a settings URL. Valid existing approval is reused. See [macOS permission notes](docs/macos-input-safety.md). |
@@ -69,7 +69,7 @@ Compare each result with History. If shared-mode dictation repeats old text, rec
 
 For Screen Sharing, Handy applies at least **500 ms before pasting** and **1,500 ms before restoring the local clipboard**. Larger configured delays are preserved. These waits allow time for transfer; they do not confirm receipt by the remote application. Experimental **Reliable Paste** is bypassed for Screen Sharing because a local clipboard read cannot confirm a remote paste. Changing windows or modifying the clipboard during transfer can cancel the paste; recover the text from History and retry.
 
-If a native Paste action times out, it may already have started. Check the remote document before retrying to avoid inserting the same text twice.
+An input error may follow partial key injection. Handy waits before guarded clipboard restoration and does not retry automatically, to avoid inserting text twice.
 
 This integration targets **Apple's Screen Sharing client connected to another Mac**. Other VNC clients and remote operating systems are outside its tested scope. Permissions and the remaining verification limits are documented in [macOS input safety](docs/macos-input-safety.md).
 
@@ -367,7 +367,7 @@ Do not use `gpg` for these `.sig` files.
 
 ### Dictation into a Mac over Screen Sharing
 
-This revision adds a native-menu paste path that keeps **Use Shared Clipboard ON**, with live remote validation still pending. Follow the [setup, dictation/copy-paste checks, and troubleshooting guide](#mac-to-mac-dictation-over-screen-sharing-vnc), also available in [Korean](README.ko.md).
+Version 0.9.12 refreshes the original session before sending the paste shortcut with **Use Shared Clipboard ON**, replacing the failed native-menu route. Live remote validation remains pending. Follow the [setup, dictation/copy-paste checks, and troubleshooting guide](#mac-to-mac-dictation-over-screen-sharing-vnc), also available in [Korean](README.ko.md).
 
 ### Previous Clipboard Content Is Pasted Instead of the Transcription
 

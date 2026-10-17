@@ -836,6 +836,18 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         paste_method, paste_delay_ms, paste_delay_after_ms
     );
 
+    // Apple's shared clipboard sends fresh promises when its session becomes
+    // key again. Refresh activation asynchronously, leaving AppKit free to
+    // deliver that change before Cmd+V. Its ordinary Paste menu is disabled
+    // for the remote canvas, and a longer sleep alone cannot refresh it.
+    #[cfg(target_os = "macos")]
+    let screen_sharing = match screen_sharing {
+        Some(target) if target.uses_shared_clipboard()? => {
+            return target.paste_shared(text, app_handle, &settings);
+        }
+        other => other,
+    };
+
     // Perform the paste operation
     match paste_method {
         PasteMethod::None => {

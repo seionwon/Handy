@@ -748,7 +748,7 @@ impl ShortcutAction for TranscribeAction {
 
                                     match utils::paste(final_text, ah_clone.clone()) {
                                         Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
+                                            "Text paste request accepted in {:?}",
                                             paste_time.elapsed()
                                         ),
                                         Err(e) => {

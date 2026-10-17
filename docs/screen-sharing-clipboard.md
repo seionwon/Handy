@@ -1,47 +1,49 @@
 # Screen Sharing clipboard modes
 
-This revision adds an ON-preserving paste route. **Live Mac-to-Mac validation is pending.** The automated tests verify command selection, cancellation, and the absence of duplicate fallback actions; they do not establish that a remote application received fresh clipboard data.
+**0.9.11 failed with shared clipboard ON in actual use.** The installed app logged `Screen Sharing: Edit > Paste is disabled` twice on 2026-10-17. The local Paste menu is not a usable remote-canvas paste action. Its mocked command-routing tests did not detect that native behavior.
+
+**0.9.12 replaces that route with an asynchronous session activation refresh. Live remote input with this revision is still unverified.** Automated tests establish sequencing and cancellation, not receipt by a remote app.
 
 ## Behavior
 
-| Use Shared Clipboard | Handy action after writing eager clipboard data                                                                                 |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| ON                   | Invoke Screen Sharing's localized **Edit → Paste** action once through Accessibility. Do not send an additional paste shortcut. |
-| OFF                  | Invoke localized **Edit → Send Clipboard**, wait, then send the paste shortcut.                                                 |
+| Use Shared Clipboard | Handy action                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| ON                   | Briefly activate Handy, publish fresh text after activation, return to the same Screen Sharing window, wait, then send the paste shortcut once. |
+| OFF                  | Publish text, invoke localized **Edit → Send Clipboard**, wait, then send the paste shortcut.                                                   |
 
-The ON route addresses the possibility that forwarding a key event alone uses the client's previous remote clipboard. The client owns the native Paste action, so actual transfer behavior must be checked against the macOS versions and connection types in use.
+The Screen Sharing client inspected on this Mac publishes shared clipboard promises when its session window becomes key. An in-place clipboard write while the same window remains key need not refresh those promises. The new route reproduces copying in a local app and returning to Screen Sharing. It uses public `NSRunningApplication` activation APIs; it does not modify Apple's app, call its private clipboard APIs, toggle the sharing checkbox, or inject mouse movements.
 
-Handy only reads the sharing checkbox. Its command interface exposes **Send Clipboard** and **Paste**; it cannot toggle sharing or activate another app. The same foreground process, focused window, and clipboard mode are checked again before acting. A changed local clipboard cancels the paste, and newer user copies are not overwritten during restoration.
+Both **Paste** and **Send Clipboard** can be disabled with sharing ON. Neither menu is used by the new ON path. Ordinary local-to-remote copy/paste remains available because sharing stays ON throughout.
 
-Handy retains the minimum 500 ms pre-paste and 1,500 ms post-paste waits, preserving longer configured delays. These are timing allowances, not remote receipts. Reliable Paste remains bypassed for Screen Sharing.
+## Transaction and safety
 
-A native menu action can time out after starting. Apple documents this ambiguity for [AXUIElementPerformAction](https://developer.apple.com/documentation/applicationservices/1462091-axuielementperformaction). Handy propagates the error without retrying or falling back to a synthetic shortcut. Inspect the remote text before retrying manually.
+- Capture the original process, window, clipboard mode, and clipboard contents before requesting activation.
+- Observe that Handy really became active before publishing text. An accepted activation request alone never authorizes paste.
+- Request return to the original session only while Handy remains the active app. Observe that the same window really returned before starting the transfer delay.
+- Bound each activation phase to two seconds. Cancel before paste on a different foreground app, changed session window, clipboard mode change, intervening copy, or dictation cancellation. Preserve newer user copies.
+- Keep the main run loop free between phases. A worker schedules short main-thread checks; it never holds AppKit or Accessibility objects. Retain the sharing checkbox for the transaction instead of repeatedly traversing another process's full menu tree.
+- Apply at least 500 ms after the session returns before paste, and 1,500 ms after injection before restoring clipboard contents. Honor larger user delays. These delays allow transfer; they are not a remote receipt.
+- Send the paste chord once. If injection reports an error after partial delivery, keep the restoration wait and report failure without retrying or switching input routes.
+- Finish clipboard handling and optional auto-submit in the asynchronous transaction. Auto-submit requires the same focused session, unchanged clipboard and mode, and no cancellation. A newer user copy is never overwritten.
+- Reject an overlapping shared paste before it alters the clipboard. Its transcription remains in History.
+
+Reliable Paste remains bypassed for Screen Sharing. A local pasteboard read is not proof that a remote app consumed the new text.
 
 ## Automated coverage
 
-The `screen_sharing::tests` tests exercise both clipboard modes with a mock target, without requesting permissions, installing event taps, manipulating the clipboard, or sending real input:
+The native Rust tests exercise the activation state machine and manual transfer through mocks, without requesting permissions, activating real apps, changing the system clipboard, or posting input. They cover observed activation versus request acceptance, return timeouts, user focus changes, per-dictation refresh, a single paste, preservation of longer delays, rejection of shared mode in the synchronous path, and OFF-mode transfer and cancellation.
 
-- Shared-mode pastes never call Send Clipboard or the synthetic-key path.
-- Two successive shared-mode operations each request their own native paste.
-- A failed or timed-out native paste is attempted once and has no key fallback.
-- Manual-mode transfers precede the paste shortcut; failed preparation stops the transaction.
-- Losing focus or changing clipboard mode aborts the operation.
-- An unfocused target is rejected before clipboard modification.
-- Network timing minima preserve larger user settings.
+For 0.9.12, 13 Screen Sharing tests, eight clipboard transaction tests, and three key-release tests passed (24 total). They include restoration after preparation/key failures and key release after partial errors or panics. Lint, formatting, and release clippy also passed; clippy reported only the existing model-manager formatting warnings. None of these tests establishes live transfer behavior of Apple's client, network latency, or the remote application's paste handling.
 
-The surrounding clipboard transaction tests check restoration when preparation or paste fails. These mocks cannot establish the native menu's remote clipboard semantics.
+## Live validation still required
 
-## Manual validation
+Use a 0.9.12 build with Apple's Screen Sharing app connected to another Mac in Control Mode and Handy's **Clipboard (Cmd+V)** method.
 
-Use Apple's Screen Sharing app on the local Mac, connect to another Mac in Control Mode, and select Handy's **Clipboard (Cmd+V)** paste method. Install a new build from this revision; previously generated DMGs retain the older OFF requirement.
+1. Keep **Use Shared Clipboard ON** throughout.
+2. In an empty remote editor, dictate two different sentences. Each operation should briefly activate Handy and return to the same remote window. Compare both results with History; the second must not repeat the first.
+3. Copy different text in a local app and paste into the remote editor normally. Dictate another sentence afterwards.
+4. Repeat with Korean using a Korean-capable model and in the target applications and connection types actually used.
+5. Switch to another local app, change remote windows, cancel, or copy other text before paste. Verify cancellation and preservation of the newer copy.
+6. With sharing OFF, verify the existing Send Clipboard path still works.
 
-1. Keep **Use Shared Clipboard ON** and confirm it stays checked throughout every step.
-2. In a remote editor, dictate two different sentences without switching away from Screen Sharing. Compare both with History; verify the second does not repeat the first.
-3. Copy different text in a local app, return to the remote editor, and paste normally. Dictate a third sentence afterwards.
-4. Repeat with Korean using a Korean-capable recognition model, testing both repeated and different sentences.
-5. Repeat in the remote applications actually used, and under a slower connection. Increase paste delays if needed.
-6. Change the local foreground app or remote session window during the wait. Confirm cancellation and that Handy does not paste into the new target.
-7. Switch clipboard mode during the wait. Confirm cancellation and that Handy leaves the new setting unchanged.
-8. With sharing OFF, verify the existing Send Clipboard route still works.
-
-If ON mode fails, record both macOS versions, Standard/High Performance connection type, target app, configured delays, and whether manual **Edit → Paste** reads fresh text while Screen Sharing stays frontmost. Redact dictated text in logs. Keep the ON path marked as awaiting live validation until this check succeeds.
+If this fails, retain the non-content `[screen-sharing]` phase/error logs, both macOS versions, connection type, target app, and configured delays. Do not log dictated text or remote connection addresses. A log saying the chord was sent is not evidence the remote field received fresh text.
