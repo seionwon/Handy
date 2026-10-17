@@ -10,6 +10,7 @@ target
 
 # Tauri
 src-tauri/target
+src-tauri/target.noindex
 src-tauri/gen
 
 # Generated files

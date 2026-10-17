@@ -16,6 +16,7 @@ import {
 import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
+import QuitButton from "./components/QuitButton";
 import SecureInputWarning from "./components/SecureInputWarning";
 import Footer from "./components/footer";
 import Onboarding, {
@@ -33,11 +34,12 @@ import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { createInputInitializer } from "@/lib/inputInitialization";
+import { checkStartup } from "@/lib/startup";
 import { deleteRetiredModel } from "@/components/onboarding/retiredModels";
 
-const initializeInputSystem = createInputInitializer(commands);
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
+const initializeInputSystem = createInputInitializer(commands);
 type OnboardingStep = "accessibility" | "migration" | "model" | "done";
 
 // Stable identity so preview effects do not re-run due to callback changes.
@@ -102,7 +104,35 @@ function App() {
   }, [currentSection]);
 
   useEffect(() => {
-    checkOnboardingStatus();
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const startup = await checkStartup({
+          commands,
+          platform: platform(),
+          checkAccessibility: checkAccessibilityPermission,
+          checkMicrophone: checkMicrophonePermission,
+        });
+        if (cancelled) return;
+        setIsReturningUser(startup.isReturningUser);
+        setMigrationModelId(startup.migrationModelId);
+        if (startup.step === "accessibility" || startup.step === "migration") {
+          await revealMainWindowForPermissions();
+        }
+        if (!cancelled) setOnboardingStep(startup.step);
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to check startup permissions:", error);
+        await revealMainWindowForPermissions();
+        if (!cancelled) setOnboardingStep("accessibility");
+      }
+    };
+    void check();
+    // StrictMode and unmount can leave read-only IPC queries outstanding.
+    // Their late results must not replace a newer onboarding step.
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Initialize RTL direction when language changes
@@ -242,13 +272,6 @@ function App() {
     }
   };
 
-  const getMigrationModelId = async (
-    selectedModel: string,
-  ): Promise<string | null> => {
-    const retired = await commands.getRetiredModels();
-    return retired.some((m) => m.id === selectedModel) ? selectedModel : null;
-  };
-
   // Returning users land in the app unless their model needs updating. The
   // window may start hidden, so bring it forward for the update screen.
   const finishReturningUser = async (retiredModelId: string | null) => {
@@ -257,69 +280,6 @@ function App() {
       setOnboardingStep("migration");
     } else {
       setOnboardingStep("done");
-    }
-  };
-
-  const checkOnboardingStatus = async () => {
-    try {
-      const settingsResult = await commands.getAppSettings();
-      const hasCompletedOnboarding =
-        settingsResult.status === "ok" &&
-        settingsResult.data.onboarding_completed === true;
-      const currentPlatform = platform();
-
-      if (hasCompletedOnboarding) {
-        // Returning user - check if they need to grant permissions first
-        setIsReturningUser(true);
-        const retiredModelId = await getMigrationModelId(
-          settingsResult.data.selected_model ?? "",
-        );
-        setMigrationModelId(retiredModelId);
-
-        if (currentPlatform === "macos") {
-          try {
-            const [hasAccessibility, hasMicrophone] = await Promise.all([
-              checkAccessibilityPermission(),
-              checkMicrophonePermission(),
-            ]);
-            if (!hasAccessibility || !hasMicrophone) {
-              await revealMainWindowForPermissions();
-              setOnboardingStep("accessibility");
-              return;
-            }
-          } catch (e) {
-            console.warn("Failed to check macOS permissions:", e);
-            // If we can't check, proceed to main app and let them fix it there
-          }
-        }
-
-        if (currentPlatform === "windows") {
-          try {
-            const microphoneStatus =
-              await commands.getWindowsMicrophonePermissionStatus();
-            if (
-              microphoneStatus.supported &&
-              microphoneStatus.overall_access === "denied"
-            ) {
-              await revealMainWindowForPermissions();
-              setOnboardingStep("accessibility");
-              return;
-            }
-          } catch (e) {
-            console.warn("Failed to check Windows microphone permissions:", e);
-            // If we can't check, proceed to main app and let them fix it there
-          }
-        }
-
-        await finishReturningUser(retiredModelId);
-      } else {
-        // New user - start full onboarding
-        setIsReturningUser(false);
-        setOnboardingStep("accessibility");
-      }
-    } catch (error) {
-      console.error("Failed to check onboarding status:", error);
-      setOnboardingStep("accessibility");
     }
   };
 
@@ -369,7 +329,16 @@ function App() {
 
   // Still checking onboarding status
   if (onboardingStep === null) {
-    return null;
+    return (
+      <div className="relative h-screen flex items-center justify-center">
+        <div className="absolute top-4 right-4">
+          <QuitButton />
+        </div>
+        <p role="status" className="text-text/60">
+          {t("common.loading")}
+        </p>
+      </div>
+    );
   }
 
   // Select the content for the current step. The Toaster is rendered once, in a

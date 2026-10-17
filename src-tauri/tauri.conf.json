@@ -4,9 +4,9 @@
   "version": "0.9.8",
   "identifier": "com.pais.handy",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun scripts/macos-build-layout.ts && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun scripts/macos-build-layout.ts && bun run build",
     "frontendDist": "../dist"
   },
   "app": {

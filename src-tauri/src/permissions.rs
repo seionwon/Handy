@@ -1,7 +1,7 @@
 //! Explicit macOS permission actions. Checking permission never installs an
 //! input hook, requests a prompt, or modifies the system's privacy database.
 
-pub fn ensure_accessibility() -> Result<(), String> {
+fn accessibility_granted() -> bool {
     #[cfg(target_os = "macos")]
     {
         #[link(name = "ApplicationServices", kind = "framework")]
@@ -9,11 +9,18 @@ pub fn ensure_accessibility() -> Result<(), String> {
             fn AXIsProcessTrusted() -> bool;
         }
         // SAFETY: system query with no pointers or side effects.
-        if !unsafe { AXIsProcessTrusted() } {
-            return Err("Accessibility permission is required for the input system".into());
-        }
+        unsafe { AXIsProcessTrusted() }
     }
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+pub fn ensure_accessibility() -> Result<(), String> {
+    if accessibility_granted() {
+        Ok(())
+    } else {
+        Err("Accessibility permission is required for the input system".into())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -30,15 +37,20 @@ fn open_privacy_panel(panel: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Opening the pane also works when a denied or stale Handy entry already
-/// exists and macOS declines to display another permission prompt.
+/// Reuse a current grant, including one enabled while the UI was checking.
+/// A denied grant opens the pane without creating another permission prompt.
 #[tauri::command]
 #[specta::specta]
 pub async fn open_accessibility_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    return tauri::async_runtime::spawn_blocking(|| open_privacy_panel("Privacy_Accessibility"))
-        .await
-        .map_err(|e| e.to_string())?;
+    return tauri::async_runtime::spawn_blocking(|| {
+        if accessibility_granted() {
+            return Ok(());
+        }
+        open_privacy_panel("Privacy_Accessibility")
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     #[cfg(not(target_os = "macos"))]
     Ok(())
 }

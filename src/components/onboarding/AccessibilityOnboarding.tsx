@@ -8,6 +8,7 @@ import {
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { pollPermissions } from "@/lib/permissionPolling";
+import { reuseOrOpenAccessibility } from "@/lib/accessibilityPermission";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import QuitButton from "../QuitButton";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
@@ -122,11 +123,14 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     requestInFlightRef.current = true;
     setRequesting(true);
     try {
-      // Open one settings pane directly. The plugin's permission prompt plus
-      // this command presented two separate permission actions for one click.
-      const result = await commands.openAccessibilitySettings();
-      if (result.status === "error") throw new Error(result.error);
-      setPermissions((prev) => ({ ...prev, accessibility: "waiting" }));
+      const granted = await reuseOrOpenAccessibility({
+        check: checkAccessibilityPermission,
+        openSettings: commands.openAccessibilitySettings,
+      });
+      setPermissions((prev) => ({
+        ...prev,
+        accessibility: granted ? "granted" : "waiting",
+      }));
       setPollingAttempt((attempt) => attempt + 1);
     } catch (error) {
       console.error("Failed to request accessibility permission:", error);
@@ -167,7 +171,10 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   // Still checking platform/initial permissions
   if (isChecking) {
     return (
-      <div className="h-screen w-full flex items-center justify-center">
+      <div className="relative h-screen w-full flex items-center justify-center">
+        <div className="absolute top-4 right-4">
+          <QuitButton disabled={preview} />
+        </div>
         <Loader2 className="w-8 h-8 animate-spin text-text/50" />
       </div>
     );

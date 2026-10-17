@@ -1,23 +1,37 @@
 // Run on macOS: bun scripts/build-macos-share.ts
 // To repackage the app from a completed build: add --package-only.
-// Requires Bun, Rust (arm64 + x86_64 targets), CMake and Xcode/Command Line Tools.
-import { chmod, copyFile, mkdir, mkdtemp, symlink } from "node:fs/promises";
+// Add --arm64-only for Apple Silicon; the default builds both Mac architectures.
+// Requires Bun, Rust targets, CMake and Xcode/Command Line Tools.
+import { chmod, copyFile, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { prepareMacosBuildOutput } from "./macos-build-layout";
 
 if (process.platform !== "darwin") {
   throw new Error("The macOS installer must be built on macOS.");
 }
 
 const args = process.argv.slice(2);
-if (args.some((arg) => arg !== "--package-only")) {
-  throw new Error("Usage: bun scripts/build-macos-share.ts [--package-only]");
+if (args.some((arg) => !["--package-only", "--arm64-only"].includes(arg))) {
+  throw new Error(
+    "Usage: bun scripts/build-macos-share.ts [--package-only] [--arm64-only]",
+  );
 }
 const packageOnly = args.includes("--package-only");
+const arm64Only = args.includes("--arm64-only");
+const target = arm64Only ? "aarch64-apple-darwin" : "universal-apple-darwin";
 
 const root = resolve(import.meta.dir, "..");
+await prepareMacosBuildOutput(root);
 const config = await Bun.file(join(root, "src-tauri/tauri.conf.json")).json();
+const shareConfig = await Bun.file(
+  join(root, "src-tauri/tauri.macos-share.conf.json"),
+).json();
+const signingIdentity = process.env.HANDY_MACOS_SIGNING_IDENTITY?.trim();
+if (signingIdentity) {
+  shareConfig.bundle.macOS.signingIdentity = signingIdentity;
+}
 const output = join(root, "src-tauri/target/share");
-const filename = `Handy-ScreenSharing-${config.version}-universal.dmg`;
+const filename = `Handy-ScreenSharing-${config.version}-${arm64Only ? "arm64" : "universal"}.dmg`;
 const destination = join(output, filename);
 
 // Keep clang, Swift, CMake and Rust on the same SDK, including on machines
@@ -34,7 +48,10 @@ if (sdkLookup.exitCode !== 0) {
 const sdk = sdkLookup.stdout.toString().trim();
 
 // Never silently overwrite a previously shared installer/checksum.
-if (await Bun.file(destination).exists()) {
+if (
+  (await Bun.file(destination).exists()) ||
+  (await Bun.file(`${destination}.sha256`).exists())
+) {
   throw new Error(
     `Installer already exists; move it aside first: ${destination}`,
   );
@@ -70,13 +87,13 @@ if (!packageOnly) {
     "tauri",
     "build",
     "--target",
-    "universal-apple-darwin",
+    target,
     "--bundles",
     "app",
     "--features",
     "disable-updater",
     "--config",
-    "src-tauri/tauri.macos-share.conf.json",
+    JSON.stringify(shareConfig),
     "--ci",
     "--",
     "--locked",
@@ -85,50 +102,71 @@ if (!packageOnly) {
 
 const app = join(
   root,
-  "src-tauri/target/universal-apple-darwin/release/bundle/macos/Handy.app",
+  `src-tauri/target/${target}/release/bundle/macos/Handy.app`,
 );
 await run([
   "lipo",
   join(app, "Contents/MacOS/handy"),
   "-verify_arch",
-  "arm64",
-  "x86_64",
+  ...(arm64Only ? ["arm64"] : ["arm64", "x86_64"]),
 ]);
 await run(["codesign", "--verify", "--deep", "--strict", app]);
 
 await mkdir(output, { recursive: true });
-// Retain staging under ignored build output for inspection/reproduction.
-const staging = await mkdtemp(join(output, ".staging-"));
-// mkdtemp defaults to 0700; the image root must be readable by other users too.
-await chmod(staging, 0o755);
-await run(["ditto", app, join(staging, "Handy.app")]);
-await symlink("/Applications", join(staging, "Applications"));
-await copyFile(join(root, "LICENSE"), join(staging, "LICENSE.txt"));
-await copyFile(
-  join(root, "packaging/macos/INSTALL-KO.txt"),
-  join(staging, "INSTALL-KO.txt"),
-);
-await run([
-  "hdiutil",
-  "create",
-  "-volname",
-  "Handy Screen Sharing",
-  "-srcfolder",
-  staging,
-  "-format",
-  "UDZO",
-  "-fs",
-  "HFS+",
-  destination,
-]);
-await run(["hdiutil", "verify", destination]);
+const stagingRoot = join(output, ".staging.noindex");
+await mkdir(stagingRoot, { recursive: true });
+const staging = await mkdtemp(join(stagingRoot, "Handy-"));
+const intermediate = `${staging}.hfs.dmg`;
+try {
+  // mkdtemp defaults to 0700; the image root must be readable by other users too.
+  await chmod(staging, 0o755);
+  await run(["ditto", app, join(staging, "Handy.app")]);
+  await run([
+    "codesign",
+    "--verify",
+    "--deep",
+    "--strict",
+    join(staging, "Handy.app"),
+  ]);
+  await symlink("/Applications", join(staging, "Applications"));
+  await copyFile(join(root, "LICENSE"), join(staging, "LICENSE.txt"));
+  await copyFile(
+    join(root, "packaging/macos/INSTALL-KO.txt"),
+    join(staging, "INSTALL-KO.txt"),
+  );
+  // The installer volume is temporary; index the installed Applications copy.
+  await Bun.write(join(staging, ".metadata_never_index"), "");
+  await run([
+    "hdiutil",
+    "makehybrid",
+    "-hfs",
+    "-hfs-volume-name",
+    "Handy Screen Sharing",
+    "-o",
+    intermediate,
+    staging,
+  ]);
+  await run([
+    "hdiutil",
+    "convert",
+    intermediate,
+    "-format",
+    "UDZO",
+    "-o",
+    destination,
+  ]);
+  await run(["hdiutil", "verify", destination]);
 
-const digest = new Bun.CryptoHasher("sha256")
-  .update(await Bun.file(destination).arrayBuffer())
-  .digest("hex");
-await Bun.write(`${destination}.sha256`, `${digest}  ${filename}\n`);
-await copyFile(
-  join(root, "packaging/macos/INSTALL-KO.txt"),
-  join(output, "INSTALL-KO.txt"),
-);
-console.log(`\nShare this installer: ${destination}\nSHA-256: ${digest}`);
+  const digest = new Bun.CryptoHasher("sha256")
+    .update(await Bun.file(destination).arrayBuffer())
+    .digest("hex");
+  await Bun.write(`${destination}.sha256`, `${digest}  ${filename}\n`);
+  await copyFile(
+    join(root, "packaging/macos/INSTALL-KO.txt"),
+    join(output, "INSTALL-KO.txt"),
+  );
+  console.log(`\nShare this installer: ${destination}\nSHA-256: ${digest}`);
+} finally {
+  await rm(staging, { recursive: true, force: true });
+  await rm(intermediate, { force: true });
+}

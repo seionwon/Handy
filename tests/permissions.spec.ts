@@ -22,7 +22,9 @@ test("a listed but denied app keeps an actionable settings button", async ({
 }) => {
   await page.goto(fixture);
   await page.getByRole("button", { name: "Open System Settings" }).click();
-  await expect(page.getByText(/Enable Handy in System Settings/)).toBeVisible();
+  await expect(
+    page.getByText(/Keep the existing Handy entry enabled/),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Open System Settings" }).click();
   await expect
     .poll(() =>
@@ -94,6 +96,21 @@ test("permission previews remain inert", async ({ page }) => {
 });
 
 for (const view of ["onboarding", "legacy"]) {
+  test(`${view} reuses permission enabled since the last UI check`, async ({
+    page,
+  }) => {
+    await page.goto(fixture + (view === "legacy" ? "?legacy" : ""));
+    const button = page.getByRole("button", { name: "Open System Settings" });
+    await expect(button).toBeVisible();
+    await page.evaluate("window.permissionHarness.accessibility = true");
+    await button.click();
+    await expect(button).toHaveCount(0);
+    const calls: string[] = await page.evaluate(
+      "window.permissionHarness.calls",
+    );
+    expect(calls).not.toContain("open_accessibility_settings");
+  });
+
   test(`${view} opens one permission pane without a second system prompt`, async ({
     page,
   }) => {
@@ -121,3 +138,39 @@ for (const view of ["onboarding", "legacy"]) {
     ).toBe(false);
   });
 }
+
+test("legacy card stays hidden while an existing grant is checked", async ({
+  page,
+}) => {
+  await page.goto(fixture + "?legacy&granted&delay=1000");
+  await expect
+    .poll(() => page.evaluate("window.permissionHarness.inFlight"))
+    .toBeGreaterThan(0);
+  await expect(
+    page.getByRole("button", { name: "Open System Settings" }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate("window.permissionHarness.inFlight"))
+    .toBe(0);
+  await expect(
+    page.getByRole("button", { name: "Open System Settings" }),
+  ).toHaveCount(0);
+});
+
+test("legacy card refreshes the existing grant when Handy regains focus", async ({
+  page,
+}) => {
+  await page.goto(fixture + "?legacy");
+  const button = page.getByRole("button", { name: "Open System Settings" });
+  await expect(button).toBeVisible();
+  await page.evaluate(() => {
+    (
+      window as unknown as { permissionHarness: { accessibility: boolean } }
+    ).permissionHarness.accessibility = true;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(button).toHaveCount(0);
+  expect(await page.evaluate("window.permissionHarness.calls")).not.toContain(
+    "open_accessibility_settings",
+  );
+});

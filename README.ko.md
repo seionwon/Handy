@@ -37,6 +37,10 @@
 
 앱 이름과 설정 저장 위치가 원본 Handy와 같으므로 기존 앱을 교체합니다. 기존 앱을 보관하려면 교체 전에 따로 옮겨 두세요. 설치 파일에는 배포자의 녹음·전사 기록·계정·API 키·개인 설정·다운로드한 인식 모델이 포함되지 않습니다.
 
+**이미 승인된 권한은 그대로 사용하며 기존 Handy 항목을 삭제할 필요가 없습니다.** 권한이 유효하면 설정 화면을 건너뜁니다. 목록에 켜진 항목이 있어도 현재 버전의 서명이 달라 macOS가 거부하면 재승인이 필요할 수 있습니다. 먼저 Handy를 완전히 종료하고 `/Applications/Handy.app`을 다시 실행하세요. 자세한 구분은 [권한 안내](docs/macos-input-safety.md#기존-handy-항목과-승인-유지)를 참고하세요.
+
+**앱 검색에는 설치본 하나를 사용합니다.** 빌드 사본은 Spotlight 제외 폴더인 `src-tauri/target.noindex/`에 보관하고, 배포용 임시 사본은 패키징 후 정리합니다. 설치 후에는 DMG를 추출하세요. 예전 빌드의 검색 항목이 남아 있으면 [중복 아이콘 정리](BUILD.md#duplicate-handy-icons-in-macos-app-search)를 참고하세요.
+
 배포 스크립트는 임시 **ad-hoc 서명**을 사용하며 **Apple Developer ID 서명·공증을 하지 않습니다**. 신뢰하는 출처의 앱을 macOS가 차단하면 한 번 실행을 시도한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 보안 → ‘확인 없이 열기’**에서 승인합니다. 자세한 절차는 [동봉 설치 안내](packaging/macos/INSTALL-KO.txt)와 [Apple 공식 안내](https://support.apple.com/ko-kr/102445)를 참고하세요.
 
 ## 화면 공유 설정: 이 순서대로 확인하세요
@@ -146,6 +150,8 @@ bun scripts/build-macos-share.ts
 ```
 
 전체 Xcode를 사용하는 경우의 환경 설정 등은 [Universal 배포 빌드 안내](BUILD.md#macos-screen-sharing-distribution-universal)를 참고하세요. 이 빌드는 macOS 11.0 이상을 대상으로 하지만, 모든 macOS 버전과 Intel 실기기에서 검증되었다는 뜻은 아닙니다. 별도로 받은 설치 파일이 arm64 전용이면 Apple Silicon Mac용입니다.
+
+Apple Silicon 전용 설치 파일은 `bun scripts/build-macos-share.ts --arm64-only`로 만듭니다. 이미 빌드한 앱을 다시 포장할 때는 `--package-only`도 함께 지정합니다.
 
 결과물은 `src-tauri/target/share/`에 생성됩니다.
 
