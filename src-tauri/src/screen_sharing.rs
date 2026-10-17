@@ -1,8 +1,9 @@
 //! Clipboard handoff to Apple's Screen Sharing client (Mac-to-Mac sessions).
 //!
 //! A local pasteboard read is not a receipt from the remote application. Use
-//! actual pasteboard data, request a transfer when automatic sharing is off,
-//! and allow time for the network before sending Cmd+V or restoring the data.
+//! actual pasteboard data and request an explicit transfer for every paste.
+//! Automatic sharing alone can keep stale remote data while the client stays
+//! frontmost. Allow time for the network before Cmd+V or restoring the data.
 //! Called on the main thread, like the other macOS paste implementations.
 
 use log::info;
@@ -115,19 +116,13 @@ impl CfValue {
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum ClipboardTransfer {
-    Send,
-    Shared,
-}
-
-fn clipboard_transfer(send_enabled: bool, shared: bool) -> Result<ClipboardTransfer, String> {
+fn require_explicit_clipboard_transfer(send_enabled: bool, shared: bool) -> Result<(), String> {
     if send_enabled {
-        Ok(ClipboardTransfer::Send)
+        Ok(())
     } else if shared {
-        Ok(ClipboardTransfer::Shared)
+        Err("Screen Sharing: turn off Edit > Use Shared Clipboard so Edit > Send Clipboard is enabled, then retry. Automatic sharing can paste an earlier transcription while Screen Sharing stays in front. The new transcription is available in History.".into())
     } else {
-        Err("Screen Sharing clipboard transfer is unavailable. Connect to a Mac in Control Mode and enable Edit > Use Shared Clipboard.".into())
+        Err("Screen Sharing clipboard transfer is unavailable. Connect to a Mac in Control Mode and make sure Edit > Send Clipboard is enabled. The transcription is available in History.".into())
     }
 }
 
@@ -245,15 +240,10 @@ impl ScreenSharingTarget {
             })
         };
         self.ensure_focused()?;
-        match clipboard_transfer(send_enabled, shared)? {
-            ClipboardTransfer::Send => {
-                if let Some(item) = send {
-                    item.press()?;
-                }
-                info!("[screen-sharing] requested clipboard transfer to remote Mac");
-            }
-            ClipboardTransfer::Shared => info!("[screen-sharing] using shared clipboard"),
-        }
+        require_explicit_clipboard_transfer(send_enabled, shared)?;
+        let send = send.ok_or("Screen Sharing: Send Clipboard menu item is unavailable")?;
+        send.press()?;
+        info!("[screen-sharing] requested clipboard transfer to remote Mac");
         Ok(())
     }
 }
@@ -270,21 +260,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manual_clipboard_sharing_requests_a_transfer() {
-        assert_eq!(clipboard_transfer(true, false), Ok(ClipboardTransfer::Send));
+    fn manual_clipboard_sharing_allows_an_explicit_transfer() {
+        assert!(require_explicit_clipboard_transfer(true, false).is_ok());
     }
 
     #[test]
-    fn automatic_sharing_does_not_require_the_disabled_send_item() {
-        assert_eq!(
-            clipboard_transfer(false, true),
-            Ok(ClipboardTransfer::Shared)
-        );
+    fn automatic_sharing_alone_cannot_confirm_a_fresh_transfer() {
+        let error = require_explicit_clipboard_transfer(false, true).unwrap_err();
+        assert!(error.contains("Use Shared Clipboard"));
+        assert!(error.contains("Send Clipboard"));
+    }
+
+    #[test]
+    fn an_enabled_send_item_is_required_for_every_transcript() {
+        // A foreground client can retain the first remote clipboard while the
+        // local clipboard changes. A checked sharing menu must not authorize
+        // the next paste after the explicit transfer becomes unavailable.
+        assert!(require_explicit_clipboard_transfer(true, true).is_ok());
+        assert!(require_explicit_clipboard_transfer(false, true).is_err());
     }
 
     #[test]
     fn unavailable_clipboard_transfer_must_not_paste_stale_remote_text() {
-        assert!(clipboard_transfer(false, false).is_err());
+        assert!(require_explicit_clipboard_transfer(false, false).is_err());
     }
 
     #[test]
