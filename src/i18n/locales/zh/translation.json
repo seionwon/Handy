@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "辅助功能访问",
         "description": "需要将转录文本输入到您的应用程序中。",
-        "existingEntryHint": "如果列表中已有 Handy，请启用该条目。如果更换应用后仍无法获得权限，请退出 Handy，删除旧条目，重新添加已安装的 Handy.app，然后再次打开。"
+        "existingEntryHint": "macOS 尚未授权此 Handy 应用。已有的有效权限会自动沿用。"
       },
       "grant": "授予权限",
       "granted": "已授予",
@@ -89,7 +89,9 @@
         "initializeFailed": "无法启动键盘快捷键和文本输入。请在系统设置中检查 Handy 的权限，然后重试。"
       },
       "recheck": "重新检查",
-      "restart": "重启 Handy"
+      "restart": "重启 Handy",
+      "repair": "修复 Handy 权限",
+      "repairHint": "仅重置 Handy 的设备控制授权并重启 Handy。macOS 将再次请求您的批准。"
     }
   },
   "modelSelector": {

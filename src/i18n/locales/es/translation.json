@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Acceso de accesibilidad",
         "description": "Necesario para escribir el texto transcrito en tus aplicaciones.",
-        "existingEntryHint": "Si Handy ya aparece en la lista, activa su entrada. Si el permiso sigue denegado tras reemplazar la aplicación, cierra Handy, elimina la entrada antigua, añade Handy.app desde su ubicación de instalación y vuelve a abrirlo."
+        "existingEntryHint": "macOS aún no ha autorizado esta copia de Handy. Los permisos existentes válidos se reutilizan automáticamente."
       },
       "grant": "Conceder permiso",
       "granted": "Concedido",
@@ -89,7 +89,9 @@
         "initializeFailed": "No se pudieron iniciar los atajos de teclado ni la entrada de texto. Comprueba los permisos de Handy en los ajustes del sistema e inténtalo de nuevo."
       },
       "recheck": "Comprobar de nuevo",
-      "restart": "Reiniciar Handy"
+      "restart": "Reiniciar Handy",
+      "repair": "Reparar permiso de Handy",
+      "repairHint": "Restablece solo el permiso de control de dispositivos de Handy y lo reinicia. macOS solicitará su autorización de nuevo."
     }
   },
   "modelSelector": {

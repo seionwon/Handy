@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Quyền truy cập Trợ năng",
         "description": "Cần thiết để nhập văn bản đã chuyển đổi vào các ứng dụng của bạn.",
-        "existingEntryHint": "Nếu Handy đã có trong danh sách, hãy bật mục hiện có. Nếu quyền vẫn bị từ chối sau khi thay ứng dụng, hãy thoát Handy, xóa mục cũ, thêm Handy.app đã cài đặt rồi mở lại."
+        "existingEntryHint": "macOS chưa cấp quyền cho bản Handy này. Các quyền hiện có còn hiệu lực được tự động sử dụng lại."
       },
       "grant": "Cấp quyền",
       "granted": "Đã cấp",
@@ -89,7 +89,9 @@
         "initializeFailed": "Không thể khởi động phím tắt và nhập văn bản. Hãy kiểm tra quyền của Handy trong Cài đặt hệ thống rồi thử lại."
       },
       "recheck": "Kiểm tra lại",
-      "restart": "Khởi động lại Handy"
+      "restart": "Khởi động lại Handy",
+      "repair": "Sửa quyền Handy",
+      "repairHint": "Chỉ đặt lại quyền điều khiển thiết bị của Handy và khởi động lại Handy. macOS sẽ yêu cầu bạn cấp phép lại."
     }
   },
   "modelSelector": {

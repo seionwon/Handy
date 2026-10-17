@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Accés a l'accessibilitat",
         "description": "Necessari per escriure el text transcrit a les aplicacions.",
-        "existingEntryHint": "Si Handy ja apareix a la llista, activeu-ne l’entrada. Si després de substituir l’aplicació encara es denega el permís, tanqueu Handy, elimineu l’entrada antiga, afegiu el Handy.app instal·lat i torneu-lo a obrir."
+        "existingEntryHint": "macOS encara no ha autoritzat aquesta còpia de Handy. Els permisos existents vàlids es reutilitzen automàticament."
       },
       "grant": "Concediu el permís",
       "granted": "Concedit",
@@ -89,7 +89,9 @@
         "initializeFailed": "No s’han pogut iniciar les dreceres de teclat ni l’entrada de text. Comproveu els permisos de Handy a la configuració del sistema i torneu-ho a provar."
       },
       "recheck": "Torna a comprovar",
-      "restart": "Reinicia Handy"
+      "restart": "Reinicia Handy",
+      "repair": "Repara el permís de Handy",
+      "repairHint": "Restableix només el permís de control del dispositiu de Handy i el reinicia. macOS us demanarà una nova autorització."
     }
   },
   "modelSelector": {

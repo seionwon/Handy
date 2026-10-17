@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "アクセシビリティへのアクセス",
         "description": "アプリに文字起こししたテキストを入力するために必要です。",
-        "existingEntryHint": "Handy がすでに一覧にある場合は、その項目を有効にしてください。アプリを入れ替えた後も権限が認識されない場合は、Handy を終了し、古い項目を削除して、インストール済みの Handy.app を追加し直してから再起動してください。"
+        "existingEntryHint": "macOS はこの Handy をまだ承認していません。有効な既存の権限は自動的に使用されます。"
       },
       "grant": "権限を許可",
       "granted": "許可済み",
@@ -89,7 +89,9 @@
         "initializeFailed": "キーボードショートカットとテキスト入力を開始できませんでした。システム設定で Handy の権限を確認してから、もう一度お試しください。"
       },
       "recheck": "権限を再確認",
-      "restart": "Handyを再起動"
+      "restart": "Handyを再起動",
+      "repair": "Handy の権限を修復",
+      "repairHint": "Handy のデバイス制御の承認のみをリセットして再起動します。macOS で再度承認が求められます。"
     }
   },
   "modelSelector": {

@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Acesso à Acessibilidade",
         "description": "Necessário para digitar o texto transcrito em seus aplicativos.",
-        "existingEntryHint": "Se o Handy já estiver na lista, ative a entrada existente. Se a permissão continuar negada após substituir o aplicativo, feche o Handy, remova a entrada antiga, adicione o Handy.app instalado e abra-o novamente."
+        "existingEntryHint": "O macOS ainda não autorizou esta cópia do Handy. As permissões existentes válidas são reutilizadas automaticamente."
       },
       "grant": "Conceder Permissão",
       "granted": "Concedido",
@@ -89,7 +89,9 @@
         "initializeFailed": "Não foi possível iniciar os atalhos de teclado e a entrada de texto. Verifique as permissões do Handy nas configurações do sistema e tente novamente."
       },
       "recheck": "Verificar novamente",
-      "restart": "Reiniciar Handy"
+      "restart": "Reiniciar Handy",
+      "repair": "Reparar permissão do Handy",
+      "repairHint": "Repõe apenas a permissão de controlo de dispositivos do Handy e reinicia-o. O macOS pedirá nova autorização."
     }
   },
   "modelSelector": {

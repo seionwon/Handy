@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Accès à l'accessibilité",
         "description": "Nécessaire pour taper le texte transcrit dans vos applications.",
-        "existingEntryHint": "Si Handy figure déjà dans la liste, activez son entrée. Si l’accès reste refusé après le remplacement de l’application, quittez Handy, supprimez l’ancienne entrée, ajoutez le Handy.app installé et rouvrez Handy."
+        "existingEntryHint": "macOS n’a pas encore autorisé cette copie de Handy. Les autorisations existantes valides sont réutilisées automatiquement."
       },
       "grant": "Accorder l'autorisation",
       "granted": "Accordé",
@@ -89,7 +89,9 @@
         "initializeFailed": "Impossible de démarrer les raccourcis clavier et la saisie de texte. Vérifiez les autorisations de Handy dans les réglages système, puis réessayez."
       },
       "recheck": "Vérifier à nouveau",
-      "restart": "Redémarrer Handy"
+      "restart": "Redémarrer Handy",
+      "repair": "Réparer l’autorisation Handy",
+      "repairHint": "Réinitialise uniquement l’autorisation de contrôle de Handy et le redémarre. macOS vous demandera une nouvelle autorisation."
     }
   },
   "modelSelector": {

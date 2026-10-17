@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Hjälpmedelsåtkomst",
         "description": "Krävs för att skriva transkriberad text i dina program.",
-        "existingEntryHint": "Om Handy redan finns i listan, aktivera den befintliga posten. Om åtkomsten fortfarande nekas efter att appen har ersatts, avsluta Handy, ta bort den gamla posten, lägg till den installerade Handy.app och öppna den igen."
+        "existingEntryHint": "macOS har ännu inte godkänt den här kopian av Handy. Giltiga befintliga behörigheter återanvänds automatiskt."
       },
       "grant": "Bevilja behörighet",
       "granted": "Beviljad",
@@ -89,7 +89,9 @@
         "initializeFailed": "Tangentbordsgenvägar och textinmatning kunde inte startas. Kontrollera Handys behörigheter i Systeminställningar och försök igen."
       },
       "recheck": "Kontrollera igen",
-      "restart": "Starta om Handy"
+      "restart": "Starta om Handy",
+      "repair": "Reparera Handy-behörighet",
+      "repairHint": "Återställer endast Handys behörighet för enhetsstyrning och startar om Handy. macOS ber om ditt godkännande igen."
     }
   },
   "modelSelector": {

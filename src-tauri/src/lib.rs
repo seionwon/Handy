@@ -16,6 +16,8 @@ mod input;
 mod llm_client;
 #[cfg(target_os = "macos")]
 mod macos_install;
+#[cfg(target_os = "macos")]
+mod macos_instance;
 mod managers;
 mod memory;
 mod overlay;
@@ -627,6 +629,14 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
+    #[cfg(target_os = "macos")]
+    let replaced_instances = match macos_instance::replace_older_instances(&cli_args) {
+        Ok(pids) => pids,
+        Err(error) => {
+            macos_instance::show_startup_error(&error);
+            return;
+        }
+    };
     // Avoid ggml-metal residency-set teardown assertions when a native engine
     // outlives the Tauri shutdown sequence (#1902). This must happen before
     // transcribe-cpp initializes its Metal device. Advanced users can restore
@@ -735,6 +745,8 @@ pub fn run(cli_args: CliArgs) {
             commands::initialize_enigo,
             commands::initialize_shortcuts,
             permissions::open_accessibility_settings,
+            permissions::request_accessibility_permission,
+            permissions::repair_accessibility_permission,
             permissions::request_microphone_permission,
             commands::models::get_available_models,
             commands::models::get_model_info,
@@ -902,6 +914,8 @@ pub fn run(cli_args: CliArgs) {
         ))
         .manage(cli_args.clone())
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            log::info!("Handy {} started as PID {}; replaced older instances: {:?}", env!("CARGO_PKG_VERSION"), std::process::id(), replaced_instances);
             #[cfg(target_os = "windows")]
             log::info!(
                 "Vulkan layer policy: VK_LOADER_LAYERS_DISABLE={:?}, HANDY_KEEP_VULKAN_IMPLICIT_LAYERS={}",
@@ -1116,6 +1130,10 @@ pub fn run(cli_args: CliArgs) {
     app.run(|app, event| match &event {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
+            if macos_instance::installed_image_changed() {
+                log::info!("Installed Handy changed; restarting into the replacement build");
+                app.restart();
+            }
             // Fired when the already-running bundle is launched again from
             // Spotlight/Finder or the Dock icon is clicked. If the settings
             // window is hidden, the user is likely looking for a tray icon

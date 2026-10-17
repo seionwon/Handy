@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "손쉬운 사용 / 기기 제어 및 데이터 접근",
         "description": "녹음된 텍스트를 애플리케이션에 입력하기 위해 필요합니다.",
-        "existingEntryHint": "기존 Handy 항목을 삭제할 필요는 없습니다. 업데이트 후 스위치가 켜져 있는데 이 화면이 넘어가지 않으면 Handy를 종료한 상태에서 그 스위치를 한 번 껐다 켜고 /Applications/Handy.app을 다시 실행하세요. macOS가 현재 버전의 앱 신원을 승인해야 합니다. 목록에 없을 때만 + 버튼으로 설치된 앱을 추가하세요."
+        "existingEntryHint": "macOS가 아직 이 Handy 실행 파일을 승인하지 않았습니다. 유효한 기존 권한은 자동으로 사용합니다."
       },
       "recheck": "권한 다시 확인",
       "restart": "Handy 다시 시작",
@@ -89,7 +89,9 @@
         "checkFailed": "권한 확인에 실패했습니다. 다시 시도해주세요.",
         "requestFailed": "권한 요청에 실패했습니다. 다시 시도해주세요.",
         "initializeFailed": "단축키와 텍스트 입력을 시작하지 못했습니다. 시스템 설정에서 Handy의 권한을 확인한 후 다시 시도하세요."
-      }
+      },
+      "repair": "Handy 권한 복구",
+      "repairHint": "복구하면 Handy의 기기 제어 권한만 초기화하고 다시 시작합니다. macOS가 새 승인을 요청합니다."
     }
   },
   "modelSelector": {

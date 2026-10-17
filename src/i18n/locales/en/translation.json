@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Accessibility / Device Control and Data Access",
         "description": "Required to type transcribed text into your applications.",
-        "existingEntryHint": "Keep the existing Handy entry. If it is already enabled but this screen does not advance after an update, quit Handy, turn that entry off and back on, then open /Applications/Handy.app. macOS must approve the current app identity. Add the installed app with + only if it is missing."
+        "existingEntryHint": "macOS has not authorized this copy of Handy yet. Valid existing permissions are reused automatically."
       },
       "recheck": "Check Again",
       "restart": "Restart Handy",
@@ -89,7 +89,9 @@
         "checkFailed": "Failed to check permissions. Please try again.",
         "requestFailed": "Failed to request permission. Please try again.",
         "initializeFailed": "Could not start keyboard shortcuts and text input. Check Handy’s permissions in System Settings, then try again."
-      }
+      },
+      "repair": "Repair Handy permission",
+      "repairHint": "Repair resets only Handy’s device-control approval and restarts Handy. macOS will ask you to approve it again."
     }
   },
   "modelSelector": {

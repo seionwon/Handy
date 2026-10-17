@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Izin Aksesibilitas",
         "description": "Diperlukan untuk mengetik teks hasil transkripsi ke aplikasi Anda.",
-        "existingEntryHint": "Jika Handy sudah ada dalam daftar, aktifkan entrinya. Jika izin masih ditolak setelah aplikasi diganti, tutup Handy, hapus entri lama, tambahkan Handy.app yang terpasang, lalu buka kembali."
+        "existingEntryHint": "macOS belum mengizinkan salinan Handy ini. Izin yang sudah ada dan masih valid digunakan kembali secara otomatis."
       },
       "grant": "Berikan Izin",
       "granted": "Diizinkan",
@@ -89,7 +89,9 @@
         "initializeFailed": "Pintasan keyboard dan input teks tidak dapat dimulai. Periksa izin Handy di Pengaturan Sistem, lalu coba lagi."
       },
       "recheck": "Periksa Lagi",
-      "restart": "Mulai Ulang Handy"
+      "restart": "Mulai Ulang Handy",
+      "repair": "Perbaiki izin Handy",
+      "repairHint": "Hanya mengatur ulang izin kontrol perangkat Handy dan memulai ulang Handy. macOS akan meminta persetujuan Anda lagi."
     }
   },
   "modelSelector": {

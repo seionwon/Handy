@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { platform } from "@tauri-apps/plugin-os";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -9,7 +9,7 @@ import {
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { pollPermissions } from "@/lib/permissionPolling";
-import { reuseOrOpenAccessibility } from "@/lib/accessibilityPermission";
+import { reuseOrRequestAccessibility } from "@/lib/accessibilityPermission";
 import HandyTextLogo from "../icons/HandyTextLogo";
 import QuitButton from "../QuitButton";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
@@ -41,6 +41,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   const [pollingAttempt, setPollingAttempt] = useState(0);
   const [requesting, setRequesting] = useState(false);
   const requestInFlightRef = useRef(false);
+  const initialRequestRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
@@ -119,14 +120,17 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     });
   }, [pollingAttempt, preview, t]);
 
-  const handleGrantAccessibility = async () => {
+  const handleGrantAccessibility = useCallback(async () => {
     if (preview || requestInFlightRef.current) return;
     requestInFlightRef.current = true;
     setRequesting(true);
     try {
-      const granted = await reuseOrOpenAccessibility({
+      const granted = await reuseOrRequestAccessibility({
         check: checkAccessibilityPermission,
-        openSettings: commands.openAccessibilitySettings,
+        request:
+          permissions.accessibility === "waiting"
+            ? commands.openAccessibilitySettings
+            : commands.requestAccessibilityPermission,
       });
       setPermissions((prev) => ({
         ...prev,
@@ -140,7 +144,19 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       requestInFlightRef.current = false;
       setRequesting(false);
     }
-  };
+  }, [permissions.accessibility, preview, t]);
+
+  useEffect(() => {
+    if (
+      preview ||
+      !isMacOS ||
+      permissions.accessibility !== "needed" ||
+      initialRequestRef.current
+    )
+      return;
+    initialRequestRef.current = true;
+    void handleGrantAccessibility();
+  }, [handleGrantAccessibility, isMacOS, permissions.accessibility, preview]);
 
   const handleGrantMicrophone = async () => {
     if (preview || requestInFlightRef.current) return;
@@ -170,6 +186,24 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       await relaunch();
     } catch (error) {
       console.error("Failed to restart Handy:", error);
+      toast.error(t("onboarding.permissions.errors.requestFailed"));
+    } finally {
+      requestInFlightRef.current = false;
+      setRequesting(false);
+    }
+  };
+
+  const handleRepair = async () => {
+    if (preview || requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+    setRequesting(true);
+    try {
+      const result = await commands.repairAccessibilityPermission();
+      if (result.status === "error") throw new Error(result.error);
+      if (result.data) await relaunch();
+      else setPollingAttempt((attempt) => attempt + 1);
+    } catch (error) {
+      console.error("Failed to repair Handy permission:", error);
       toast.error(t("onboarding.permissions.errors.requestFailed"));
     } finally {
       requestInFlightRef.current = false;
@@ -298,7 +332,9 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                       disabled={requesting}
                       className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
                     >
-                      {t("accessibility.openSettings")}
+                      {permissions.accessibility === "waiting"
+                        ? t("accessibility.openSettings")
+                        : t("onboarding.permissions.grant")}
                     </button>
                   )}
                 </div>
@@ -306,7 +342,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
             </div>
           )}
           {!preview && (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap justify-center items-center gap-3">
               <button
                 onClick={() => setPollingAttempt((attempt) => attempt + 1)}
                 disabled={requesting}
@@ -314,6 +350,16 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
               >
                 {t("onboarding.permissions.recheck")}
               </button>
+              {permissions.accessibility === "waiting" && (
+                <button
+                  onClick={handleRepair}
+                  disabled={requesting}
+                  title={t("onboarding.permissions.repairHint")}
+                  className="px-3 py-2 text-sm rounded-lg border border-mid-gray/30 hover:bg-white/5"
+                >
+                  {t("onboarding.permissions.repair")}
+                </button>
+              )}
               {permissions.accessibility === "waiting" && (
                 <button
                   onClick={handleRestart}
@@ -324,6 +370,11 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                 </button>
               )}
             </div>
+          )}
+          {!preview && permissions.accessibility === "waiting" && (
+            <p className="text-sm text-center text-text/60">
+              {t("onboarding.permissions.repairHint")}
+            </p>
           )}
         </div>
       </div>

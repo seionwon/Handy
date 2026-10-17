@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Tilgængelighedsadgang",
         "description": "Påkrævet for at skrive den transskriberede tekst ind i dine programmer.",
-        "existingEntryHint": "Hvis Handy allerede står på listen, skal du aktivere posten. Hvis adgangen stadig afvises efter udskiftning af appen, skal du afslutte Handy, fjerne den gamle post, tilføje den installerede Handy.app og åbne den igen."
+        "existingEntryHint": "macOS har endnu ikke godkendt denne kopi af Handy. Gyldige eksisterende tilladelser genbruges automatisk."
       },
       "grant": "Giv tilladelse",
       "granted": "Givet",
@@ -89,7 +89,9 @@
         "initializeFailed": "Tastaturgenveje og tekstindtastning kunne ikke startes. Kontrollér Handys tilladelser i Systemindstillinger, og prøv igen."
       },
       "recheck": "Tjek igen",
-      "restart": "Genstart Handy"
+      "restart": "Genstart Handy",
+      "repair": "Reparer Handy-tilladelse",
+      "repairHint": "Nulstiller kun Handys tilladelse til enhedsstyring og genstarter Handy. macOS beder om din godkendelse igen."
     }
   },
   "modelSelector": {

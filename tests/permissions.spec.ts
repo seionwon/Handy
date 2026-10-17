@@ -23,7 +23,9 @@ test("a listed but denied app keeps an actionable settings button", async ({
 }) => {
   await page.goto(fixture);
   await page.getByRole("button", { name: "Open System Settings" }).click();
-  await expect(page.getByText(/Keep the existing Handy entry/)).toBeVisible();
+  await expect(
+    page.getByText(/macOS has not authorized this copy/),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Open System Settings" }).click();
   await expect
     .poll(() =>
@@ -37,7 +39,7 @@ test("a listed but denied app keeps an actionable settings button", async ({
     calls.filter((command) =>
       command.endsWith("request_accessibility_permission"),
     ),
-  ).toEqual([]);
+  ).toHaveLength(1);
   await page.evaluate("window.permissionHarness.accessibility = true");
   await expect
     .poll(() => page.evaluate("window.permissionHarness.completed"))
@@ -90,7 +92,7 @@ test("microphone permission uses the safe native request command and remains ret
 
 test("permission previews remain inert", async ({ page }) => {
   await page.goto(fixture + "?preview");
-  await page.getByRole("button", { name: "Open System Settings" }).click();
+  await page.getByRole("button", { name: "Grant Permission" }).last().click();
   expect(await page.evaluate("window.permissionHarness.calls")).toEqual([]);
   expect(await page.evaluate("window.permissionHarness.completed")).toBe(0);
 });
@@ -132,10 +134,10 @@ for (const view of ["onboarding", "legacy"]) {
       calls.filter((command) => command === "open_accessibility_settings"),
     ).toHaveLength(1);
     expect(
-      calls.some((command) =>
+      calls.filter((command) =>
         command.endsWith("request_accessibility_permission"),
       ),
-    ).toBe(false);
+    ).toHaveLength(view === "legacy" ? 0 : 1);
   });
 }
 
@@ -198,6 +200,7 @@ test("permission recovery uses one normal restart and never initializes input", 
   await page.getByRole("button", { name: "Open System Settings" }).click();
   const restart = page.getByRole("button", { name: "Restart Handy" });
   await expect(restart).toBeVisible();
+  await expect(restart).toBeEnabled();
   await restart.evaluate((element) => {
     (element as HTMLButtonElement).click();
     (element as HTMLButtonElement).click();
@@ -231,4 +234,74 @@ test("permission recovery stays reachable at Handy's minimum window size", async
   await expect(
     page.getByRole("button", { name: "Quit", exact: true }),
   ).toBeInViewport({ ratio: 1 });
+});
+
+test("denied onboarding requests one native consent dialog without opening settings twice", async ({
+  page,
+}) => {
+  await page.goto(fixture + "?requestDelay=400");
+  await expect(
+    page.getByRole("button", { name: "Open System Settings" }),
+  ).toBeVisible();
+  await page.waitForTimeout(1300);
+  const calls: string[] = await page.evaluate("window.permissionHarness.calls");
+  expect(
+    calls.filter((c) => c === "request_accessibility_permission"),
+  ).toHaveLength(1);
+  expect(calls).not.toContain("open_accessibility_settings");
+  expect(calls.some((c) => c.startsWith("initialize_"))).toBe(false);
+});
+
+test("permission repair coalesces clicks and restarts once after a scoped native repair", async ({
+  page,
+}) => {
+  await page.goto(fixture);
+  const repair = page.getByRole("button", { name: "Repair Handy permission" });
+  await expect(repair).toBeEnabled();
+  await repair.evaluate((element) => {
+    (element as HTMLButtonElement).click();
+    (element as HTMLButtonElement).click();
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        "window.permissionHarness.calls.filter(c => c === 'plugin:process|restart').length",
+      ),
+    )
+    .toBe(1);
+  const calls: string[] = await page.evaluate("window.permissionHarness.calls");
+  expect(
+    calls.filter((c) => c === "repair_accessibility_permission"),
+  ).toHaveLength(1);
+  expect(calls).not.toContain("open_accessibility_settings");
+  expect(calls).not.toContain("request_microphone_permission");
+});
+
+test("repair preserves a grant enabled since the last check without restarting", async ({
+  page,
+}) => {
+  await page.goto(fixture);
+  const repair = page.getByRole("button", { name: "Repair Handy permission" });
+  await expect(repair).toBeEnabled();
+  await page.evaluate("window.permissionHarness.accessibility = true");
+  await repair.click();
+  await expect
+    .poll(() => page.evaluate("window.permissionHarness.completed"))
+    .toBe(1);
+  expect(await page.evaluate("window.permissionHarness.calls")).not.toContain(
+    "plugin:process|restart",
+  );
+});
+
+test("repair failure remains retryable and does not restart or complete onboarding", async ({
+  page,
+}) => {
+  await page.goto(fixture + "?repairError");
+  const repair = page.getByRole("button", { name: "Repair Handy permission" });
+  await repair.click();
+  await expect(repair).toBeEnabled();
+  expect(await page.evaluate("window.permissionHarness.completed")).toBe(0);
+  const calls: string[] = await page.evaluate("window.permissionHarness.calls");
+  expect(calls).toContain("repair_accessibility_permission");
+  expect(calls).not.toContain("plugin:process|restart");
 });

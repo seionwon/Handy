@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Bedienungshilfen-Zugriff",
         "description": "Erforderlich, um transkribierten Text in deine Anwendungen einzugeben.",
-        "existingEntryHint": "Wenn Handy bereits aufgeführt ist, aktiviere den vorhandenen Eintrag. Wird der Zugriff nach dem Ersetzen der App weiter verweigert, beende Handy, entferne den alten Eintrag, füge die installierte Handy.app hinzu und öffne Handy erneut."
+        "existingEntryHint": "macOS hat diese Handy-App noch nicht autorisiert. Gültige bestehende Berechtigungen werden automatisch weiterverwendet."
       },
       "grant": "Berechtigung erteilen",
       "granted": "Erteilt",
@@ -89,7 +89,9 @@
         "initializeFailed": "Tastenkürzel und Texteingabe konnten nicht gestartet werden. Prüfe Handys Berechtigungen in den Systemeinstellungen und versuche es erneut."
       },
       "recheck": "Erneut prüfen",
-      "restart": "Handy neu starten"
+      "restart": "Handy neu starten",
+      "repair": "Handy-Berechtigung reparieren",
+      "repairHint": "Setzt nur Handys Berechtigung zur Gerätesteuerung zurück und startet Handy neu. macOS fragt erneut nach Ihrer Zustimmung."
     }
   },
   "modelSelector": {

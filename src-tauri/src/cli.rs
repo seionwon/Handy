@@ -62,3 +62,15 @@ pub struct CliArgs {
     #[arg(long)]
     pub json: bool,
 }
+
+impl CliArgs {
+    /// These invocations control the existing app or run an independent job.
+    pub fn controls_existing_or_headless(&self) -> bool {
+        self.toggle_transcription
+            || self.toggle_post_process
+            || self.cancel
+            || self.transcribe_file.is_some()
+            || self.list_devices
+            || self.list_models
+    }
+}

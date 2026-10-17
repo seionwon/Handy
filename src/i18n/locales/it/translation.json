@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Accesso all'Accessibilità",
         "description": "Necessario per digitare il testo trascritto nelle tue applicazioni.",
-        "existingEntryHint": "Se Handy è già nell’elenco, attiva la voce esistente. Se l’accesso è ancora negato dopo aver sostituito l’app, chiudi Handy, rimuovi la vecchia voce, aggiungi Handy.app dalla posizione di installazione e riaprilo."
+        "existingEntryHint": "macOS non ha ancora autorizzato questa copia di Handy. Le autorizzazioni esistenti valide vengono riutilizzate automaticamente."
       },
       "grant": "Concedi Permesso",
       "granted": "Concesso",
@@ -89,7 +89,9 @@
         "initializeFailed": "Impossibile avviare le scorciatoie da tastiera e l’inserimento di testo. Controlla i permessi di Handy nelle impostazioni di sistema e riprova."
       },
       "recheck": "Verifica di nuovo",
-      "restart": "Riavvia Handy"
+      "restart": "Riavvia Handy",
+      "repair": "Ripara autorizzazione Handy",
+      "repairHint": "Reimposta solo l’autorizzazione di Handy al controllo del dispositivo e lo riavvia. macOS chiederà nuovamente il consenso."
     }
   },
   "modelSelector": {

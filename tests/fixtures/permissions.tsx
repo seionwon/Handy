@@ -33,10 +33,18 @@ mockIPC(async (command) => {
   }
   if (command.endsWith("check_microphone_permission")) return state.microphone;
   if (command === "plugin:process|restart") return null;
+  if (command === "repair_accessibility_permission") {
+    if (query.has("repairError")) throw "repair failed";
+    if (state.accessibility) return false;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return true;
+  }
   if (
-    ["open_accessibility_settings", "request_microphone_permission"].includes(
-      command,
-    )
+    [
+      "open_accessibility_settings",
+      "request_accessibility_permission",
+      "request_microphone_permission",
+    ].includes(command)
   ) {
     await new Promise((resolve) =>
       setTimeout(resolve, Number(query.get("requestDelay") ?? 0)),

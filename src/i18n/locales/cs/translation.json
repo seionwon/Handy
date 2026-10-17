@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Přístup k usnadnění",
         "description": "Potřebný pro psaní přepsaného textu do vašich aplikací.",
-        "existingEntryHint": "Pokud už je Handy v seznamu, zapněte jeho položku. Pokud je po nahrazení aplikace přístup stále odepřen, ukončete Handy, odstraňte starou položku, přidejte nainstalovanou aplikaci Handy.app a znovu ji otevřete."
+        "existingEntryHint": "macOS dosud nepovolil tuto kopii Handy. Platná stávající oprávnění se automaticky použijí."
       },
       "grant": "Udělit oprávnění",
       "granted": "Uděleno",
@@ -89,7 +89,9 @@
         "initializeFailed": "Klávesové zkratky a zadávání textu se nepodařilo spustit. Zkontrolujte oprávnění Handy v nastavení systému a zkuste to znovu."
       },
       "recheck": "Zkontrolovat znovu",
-      "restart": "Restartovat Handy"
+      "restart": "Restartovat Handy",
+      "repair": "Opravit oprávnění Handy",
+      "repairHint": "Obnoví pouze oprávnění Handy k ovládání zařízení a restartuje Handy. macOS znovu požádá o schválení."
     }
   },
   "modelSelector": {

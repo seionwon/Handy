@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Dostęp do dostępności",
         "description": "Wymagany do wpisywania transkrybowanego tekstu w Twoich aplikacjach.",
-        "existingEntryHint": "Jeśli Handy jest już na liście, włącz istniejący wpis. Jeśli po wymianie aplikacji dostęp nadal jest odmawiany, zamknij Handy, usuń stary wpis, dodaj zainstalowaną aplikację Handy.app i otwórz ją ponownie."
+        "existingEntryHint": "macOS nie autoryzował jeszcze tej kopii Handy. Istniejące ważne uprawnienia są automatycznie wykorzystywane."
       },
       "grant": "Przyznaj uprawnienie",
       "granted": "Przyznano",
@@ -89,7 +89,9 @@
         "initializeFailed": "Nie udało się uruchomić skrótów klawiaturowych i wprowadzania tekstu. Sprawdź uprawnienia Handy w ustawieniach systemowych i spróbuj ponownie."
       },
       "recheck": "Sprawdź ponownie",
-      "restart": "Uruchom Handy ponownie"
+      "restart": "Uruchom Handy ponownie",
+      "repair": "Napraw uprawnienie Handy",
+      "repairHint": "Resetuje tylko uprawnienie Handy do sterowania urządzeniem i uruchamia Handy ponownie. macOS ponownie poprosi o zgodę."
     }
   },
   "modelSelector": {

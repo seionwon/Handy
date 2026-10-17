@@ -2460,12 +2460,13 @@ dependencies = [
 
 [[package]]
 name = "handy"
-version = "0.9.9"
+version = "0.9.11"
 dependencies = [
  "anyhow",
  "block2",
  "chrono",
  "clap",
+ "core-foundation 0.10.1",
  "earshot",
  "enigo",
  "env_filter",

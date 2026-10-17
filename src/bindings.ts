@@ -658,6 +658,24 @@ async openAccessibilitySettings() : Promise<Result<null, string>> {
 }
 },
 
+async requestAccessibilityPermission() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_accessibility_permission") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+
+async repairAccessibilityPermission() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("repair_accessibility_permission") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+
 async requestMicrophonePermission() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("request_microphone_permission") };

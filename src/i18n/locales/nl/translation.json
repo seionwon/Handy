@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Toegankelijkheid",
         "description": "Vereist om getranscribeerde tekst in je applicaties te kunnen typen.",
-        "existingEntryHint": "Als Handy al in de lijst staat, schakel de bestaande vermelding dan in. Blijft de toegang geweigerd nadat de app is vervangen, sluit Handy dan af, verwijder de oude vermelding, voeg de geïnstalleerde Handy.app toe en open de app opnieuw."
+        "existingEntryHint": "macOS heeft deze versie van Handy nog niet geautoriseerd. Geldige bestaande machtigingen worden automatisch hergebruikt."
       },
       "grant": "Machtiging verlenen",
       "granted": "Verleend",
@@ -89,7 +89,9 @@
         "initializeFailed": "Sneltoetsen en tekstinvoer konden niet worden gestart. Controleer de machtigingen van Handy in Systeeminstellingen en probeer het opnieuw."
       },
       "recheck": "Opnieuw controleren",
-      "restart": "Handy herstarten"
+      "restart": "Handy herstarten",
+      "repair": "Handy-machtiging herstellen",
+      "repairHint": "Stelt alleen Handy’s toestemming voor apparaatbediening opnieuw in en herstart Handy. macOS vraagt opnieuw om uw goedkeuring."
     }
   },
   "modelSelector": {

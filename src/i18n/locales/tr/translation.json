@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Erişilebilirlik Erişimi",
         "description": "Transkribe edilen metni uygulamalarınıza yazabilmek için gereklidir.",
-        "existingEntryHint": "Handy zaten listeleniyorsa mevcut kaydı etkinleştirin. Uygulamayı değiştirdikten sonra izin hâlâ reddediliyorsa Handy’yi kapatın, eski kaydı kaldırın, yüklü Handy.app uygulamasını yeniden ekleyip açın."
+        "existingEntryHint": "macOS, Handy uygulamasının bu kopyasına henüz izin vermedi. Mevcut geçerli izinler otomatik olarak kullanılır."
       },
       "grant": "İzin Ver",
       "granted": "Verildi",
@@ -89,7 +89,9 @@
         "initializeFailed": "Klavye kısayolları ve metin girişi başlatılamadı. Sistem Ayarları’nda Handy’nin izinlerini kontrol edip tekrar deneyin."
       },
       "recheck": "Yeniden kontrol et",
-      "restart": "Handy’yi yeniden başlat"
+      "restart": "Handy’yi yeniden başlat",
+      "repair": "Handy iznini onar",
+      "repairHint": "Yalnızca Handy uygulamasının aygıt denetimi iznini sıfırlar ve Handy uygulamasını yeniden başlatır. macOS yeniden onayınızı ister."
     }
   },
   "modelSelector": {

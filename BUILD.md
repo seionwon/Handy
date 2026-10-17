@@ -230,12 +230,46 @@ needs approval in System Settings. Using a consistent signing identity for futur
 builds avoids changing to a new ad-hoc identity on every update; see
 [Apple's signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
 
-When migrating from an old ad-hoc installer, quit Handy and turn the existing
-Handy entry off and back on, then launch `/Applications/Handy.app`. This refreshes
-approval for the current identity without deleting the entry. The permission
-screen includes Check Again and Restart Handy actions. The distribution packager
-now keeps one local certificate for future builds instead of generating a new
-code-hash identity every time.
+In 0.9.10, denied onboarding calls `AXIsProcessTrustedWithOptions` with the prompt
+option once per process. This registers the running identity with the native
+consent flow instead of merely opening a settings URL. It does not simultaneously
+open another settings window. The separate Open System Settings action remains
+available afterward. Toggling an old entry does not necessarily refresh its code
+requirement, so that is no longer the recovery instruction. The packager keeps
+one certificate for future builds instead of changing the code-hash identity.
+
+Version 0.9.11 adds an explicit recovery action in the main window. It rechecks
+the grant and preserves a valid one; if denied, it invokes only
+`/usr/bin/tccutil reset Accessibility com.pais.handy`, then normally restarts so
+the native consent API can register the current identity. The command accepts no
+app or service argument from the webview and rejects requests from other windows.
+It does not grant permission or edit TCC databases directly.
+
+GUI startup compares running Handy signatures before the single-instance plugin
+can forward the new launch to old code. Different builds are normally terminated
+and given up to eight seconds to exit; no force termination is used. The same
+build and remote-control CLI flags retain their normal behavior. Finder reopen
+also checks for an in-place replacement and restarts the changed installed app.
+
+### GitHub push uses the wrong account
+
+For a checkout that must use `seionwon` on GitHub, configure its credential helper
+locally after signing that account into GitHub CLI:
+
+```sh
+gh auth login --hostname github.com
+git config --local credential.https://github.com.username seionwon
+git config --local --replace-all credential.https://github.com.helper ''
+git config --local --add credential.https://github.com.helper '!gh auth git-credential'
+git push origin main
+```
+
+The empty helper entry clears inherited helpers for this host in this checkout;
+GitHub CLI supplies the selected username's token. It avoids a cached account
+from macOS Keychain taking precedence and does not erase stored credentials or
+change another checkout. The local helper configuration itself is not committed.
+
+### Comparing macOS signing identities
 
 For optional diagnosis, compare the designated requirements of the previous and rebuilt
 bundles:
