@@ -14,9 +14,7 @@ use crate::input::{self, EnigoState};
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::{AppSettings, AutoSubmitKey, ClipboardHandling, PasteMethod};
 use log::{error, info, warn};
-use objc2_app_kit::{
-    NSApplicationActivationOptions, NSPasteboard, NSRunningApplication, NSWorkspace,
-};
+use objc2_app_kit::{NSPasteboard, NSWorkspace};
 use std::cell::RefCell;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -54,6 +52,8 @@ struct Refresh {
     since: Instant,
     transfer_delay: Duration,
     restore_delay: Duration,
+    opened: bool,
+    reopen_seen: bool,
 }
 
 impl Refresh {
@@ -64,6 +64,8 @@ impl Refresh {
             since: now,
             transfer_delay: Duration::from_millis(before_ms),
             restore_delay: Duration::from_millis(after_ms),
+            opened: false,
+            reopen_seen: false,
         }
     }
 
@@ -78,7 +80,7 @@ impl Refresh {
             ));
         }
         match (self.phase, focus) {
-            (Phase::AwaitingHandy, Focus::Handy) => {
+            (Phase::AwaitingHandy, Focus::Handy) if self.opened && self.reopen_seen => {
                 self.phase = Phase::AwaitingSession;
                 self.since = now;
                 Ok(Action::ActivateSession)
@@ -88,9 +90,8 @@ impl Refresh {
                 self.since = now;
                 Ok(Action::Wait)
             }
-            (Phase::AwaitingHandy, Focus::Session) | (Phase::AwaitingSession, Focus::Handy) => {
-                Ok(Action::Wait)
-            }
+            (Phase::AwaitingHandy, Focus::Session | Focus::Handy)
+            | (Phase::AwaitingSession, Focus::Handy) => Ok(Action::Wait),
             (Phase::Transferring, Focus::Session) => {
                 if elapsed >= self.transfer_delay {
                     self.phase = Phase::Restoring;
@@ -127,17 +128,32 @@ struct Pending {
     keep_transcript: bool,
     paste_error: Option<String>,
     cancellation: Option<(Arc<AudioRecordingManager>, u64)>,
+    focus_only: bool,
+    activation_status: Option<mpsc::Receiver<Result<(), String>>>,
 }
 
 // AX and AppKit objects must never cross to the scheduling worker.
 thread_local! {
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
     static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static SELF_REOPEN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static REOPEN_SEEN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn consume_activation_reopen() -> bool {
+    SELF_REOPEN.with(|requested| match requested.take() {
+        Some(id) => {
+            REOPEN_SEEN.with(|seen| seen.set(Some(id)));
+            info!("[screen-sharing] consumed session-refresh reopen; settings window unchanged");
+            true
+        }
+        None => false,
+    })
 }
 
 impl Pending {
     fn clipboard_unchanged(&self) -> bool {
-        NSPasteboard::generalPasteboard().changeCount() == self.revision
+        self.focus_only || NSPasteboard::generalPasteboard().changeCount() == self.revision
     }
 
     fn cancelled(&self) -> bool {
@@ -155,6 +171,9 @@ impl Pending {
     }
 
     fn send_paste(&self, app: &AppHandle) -> Result<(), String> {
+        if self.focus_only {
+            return Err("Screen Sharing: focus checks cannot send input".into());
+        }
         PasteMode::Shared.ensure_current(&self.target)?;
         if self.cancelled() || !self.clipboard_unchanged() {
             return Err("Screen Sharing: clipboard or dictation changed before paste".into());
@@ -171,6 +190,22 @@ impl Pending {
     }
 
     fn tick(&mut self, app: &AppHandle) -> Result<bool, String> {
+        if self.refresh.phase == Phase::AwaitingHandy && !self.refresh.opened {
+            if let Some(status) = &self.activation_status {
+                match status.try_recv() {
+                    Ok(result) => {
+                        result?;
+                        self.refresh.opened = true;
+                        info!("[screen-sharing] NSWorkspace confirmed the existing Handy process");
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return Err("Screen Sharing: app activation completion was lost".into())
+                    }
+                }
+            }
+        }
+        self.refresh.reopen_seen = REOPEN_SEEN.with(|seen| seen.get() == Some(self.id));
         if self.refresh.phase != Phase::Restoring {
             if self.cancelled() {
                 return Err("Screen Sharing: dictation cancelled before paste".into());
@@ -192,6 +227,10 @@ impl Pending {
                     && self.refresh.phase == Phase::Transferring
                 {
                     info!("[screen-sharing] observed original session return; waiting for clipboard transfer");
+                    if self.focus_only {
+                        info!("[screen-sharing] focus check passed: original window restored with sharing ON; no clipboard text or keys sent");
+                        return Ok(true);
+                    }
                 }
                 Ok(false)
             }
@@ -204,11 +243,13 @@ impl Pending {
                 // Publish only AFTER the client has really resigned key status.
                 // This matches copying in a local app and returning to VNC;
                 // its old promise cleanup cannot consume this change first.
-                app.clipboard()
-                    .write_text(&self.text)
-                    .map_err(|e| e.to_string())?;
-                self.revision = NSPasteboard::generalPasteboard().changeCount();
-                self.published = true;
+                if !self.focus_only {
+                    app.clipboard()
+                        .write_text(&self.text)
+                        .map_err(|e| e.to_string())?;
+                    self.revision = NSPasteboard::generalPasteboard().changeCount();
+                    self.published = true;
+                }
                 // Only return while Handy still owns the activation we requested.
                 // Never use ActivateIgnoringOtherApps or activate all windows.
                 if self.focus() != Focus::Handy {
@@ -216,13 +257,7 @@ impl Pending {
                         "Screen Sharing: user changed focus before return; paste cancelled".into(),
                     );
                 }
-                if !self
-                    .target
-                    .running_app
-                    .activateWithOptions(NSApplicationActivationOptions::empty())
-                {
-                    return Err("Screen Sharing: could not return to the original session".into());
-                }
+                super::activation::return_to_session(&self.target.running_app)?;
                 info!(
                     "[screen-sharing] returning to the original session with shared clipboard ON"
                 );
@@ -248,7 +283,19 @@ impl Pending {
     }
 
     fn finish(self, app: &AppHandle, success: bool) {
-        if success && self.auto_submit && !self.cancelled() && self.clipboard_unchanged() {
+        for clear in [&SELF_REOPEN, &REOPEN_SEEN] {
+            clear.with(|slot| {
+                if slot.get() == Some(self.id) {
+                    slot.set(None);
+                }
+            });
+        }
+        if !self.focus_only
+            && success
+            && self.auto_submit
+            && !self.cancelled()
+            && self.clipboard_unchanged()
+        {
             if let Err(error) = PasteMode::Shared
                 .ensure_current(&self.target)
                 .and_then(|()| {
@@ -290,10 +337,7 @@ impl Pending {
         ) && self.target.ensure_same_window().is_ok()
             && self.focus() == Focus::Handy
         {
-            let _ = self
-                .target
-                .running_app
-                .activateWithOptions(NSApplicationActivationOptions::empty());
+            let _ = super::activation::return_to_session(&self.target.running_app);
         }
     }
 }
@@ -326,6 +370,23 @@ pub(super) fn start(
     app: AppHandle,
     settings: &AppSettings,
 ) -> Result<(), String> {
+    start_inner(target, Some(text), app, settings)
+}
+
+pub(super) fn check_focus(
+    target: ScreenSharingTarget,
+    app: AppHandle,
+    settings: &AppSettings,
+) -> Result<(), String> {
+    start_inner(target, None, app, settings)
+}
+
+fn start_inner(
+    target: ScreenSharingTarget,
+    text: Option<String>,
+    app: AppHandle,
+    settings: &AppSettings,
+) -> Result<(), String> {
     if PENDING.with(|slot| slot.borrow().is_some()) {
         return Err(
             "Screen Sharing: the previous paste is still finishing; transcription saved in History"
@@ -334,17 +395,25 @@ pub(super) fn start(
     }
     PasteMode::Shared.ensure_current(&target)?;
     crate::permissions::ensure_accessibility()?;
-    let clipboard = app.clipboard();
-    let revision = NSPasteboard::generalPasteboard().changeCount();
-    let saved_text = clipboard.read_text().ok().filter(|text| !text.is_empty());
-    let saved_image = if saved_text.is_none() {
-        clipboard.read_image().ok().map(|image| image.to_owned())
+    let focus_only = text.is_none();
+    let (revision, saved_text, saved_image) = if focus_only {
+        (0, None, None)
     } else {
-        None
+        let clipboard = app.clipboard();
+        let revision = NSPasteboard::generalPasteboard().changeCount();
+        let saved_text = clipboard.read_text().ok().filter(|text| !text.is_empty());
+        let saved_image = if saved_text.is_none() {
+            clipboard.read_image().ok().map(|image| image.to_owned())
+        } else {
+            None
+        };
+        if NSPasteboard::generalPasteboard().changeCount() != revision {
+            return Err(
+                "Screen Sharing: clipboard changed while preparing; paste cancelled".into(),
+            );
+        }
+        (revision, saved_text, saved_image)
     };
-    if NSPasteboard::generalPasteboard().changeCount() != revision {
-        return Err("Screen Sharing: clipboard changed while preparing; paste cancelled".into());
-    }
     let id = NEXT_ID.with(|next| {
         let id = next.get().wrapping_add(1);
         next.set(id);
@@ -365,7 +434,7 @@ pub(super) fn start(
             settings.paste_delay_after_ms,
         ),
         revision,
-        text,
+        text: text.unwrap_or_default(),
         published: false,
         saved_text,
         saved_image,
@@ -375,18 +444,28 @@ pub(super) fn start(
         keep_transcript: settings.clipboard_handling == ClipboardHandling::CopyToClipboard,
         paste_error: None,
         cancellation,
+        focus_only,
+        activation_status: None,
     };
     pending.target.ensure_focused()?;
-    let activated = NSRunningApplication::currentApplication()
-        .activateWithOptions(NSApplicationActivationOptions::empty());
-    if !activated {
-        pending.finish(&app, false);
-        return Err(
-            "Screen Sharing: Handy could not refresh session activation; no paste was sent".into(),
-        );
-    }
     PENDING.with(|slot| *slot.borrow_mut() = Some(pending));
-    info!("[screen-sharing] refreshing shared clipboard activation; setting remains ON");
+    SELF_REOPEN.with(|requested| requested.set(Some(id)));
+    match super::activation::request_self_activation() {
+        Ok(status) => PENDING.with(|slot| {
+            if let Some(pending) = slot.borrow_mut().as_mut() {
+                pending.activation_status = Some(status);
+            }
+        }),
+        Err(error) => {
+            PENDING.with(|slot| {
+                if let Some(pending) = slot.borrow_mut().take() {
+                    pending.finish(&app, false);
+                }
+            });
+            return Err(error);
+        }
+    }
+    info!("[screen-sharing] requested existing app through NSWorkspace; shared clipboard stays ON; focus-only check: {focus_only}");
 
     let worker_app = app.clone();
     if let Err(error) = std::thread::Builder::new()
@@ -420,10 +499,17 @@ pub(super) fn start(
 mod tests {
     use super::*;
 
+    fn ready_refresh(start: Instant) -> Refresh {
+        let mut refresh = Refresh::new(start, 0, 0);
+        refresh.opened = true;
+        refresh.reopen_seen = true;
+        refresh
+    }
+
     #[test]
     fn shared_paste_requires_an_observed_round_trip_and_transfer_delay() {
         let start = Instant::now();
-        let mut refresh = Refresh::new(start, 0, 0);
+        let mut refresh = ready_refresh(start);
         assert_eq!(refresh.advance(start, Focus::Session), Ok(Action::Wait));
         assert_eq!(
             refresh.advance(start, Focus::Handy),
@@ -449,7 +535,7 @@ mod tests {
     #[test]
     fn activation_request_acceptance_without_actual_activation_never_authorizes_paste() {
         let start = Instant::now();
-        let mut refresh = Refresh::new(start, 0, 0);
+        let mut refresh = ready_refresh(start);
         assert_eq!(refresh.advance(start, Focus::Session), Ok(Action::Wait));
         assert!(refresh
             .advance(start + ACTIVATION_TIMEOUT, Focus::Session)
@@ -459,7 +545,7 @@ mod tests {
     #[test]
     fn failed_return_to_session_times_out_without_pasting() {
         let start = Instant::now();
-        let mut refresh = Refresh::new(start, 0, 0);
+        let mut refresh = ready_refresh(start);
         assert_eq!(
             refresh.advance(start, Focus::Handy),
             Ok(Action::ActivateSession)
@@ -510,7 +596,7 @@ mod tests {
     fn two_dictations_each_require_their_own_activation_refresh() {
         let start = Instant::now();
         for _ in 0..2 {
-            let mut refresh = Refresh::new(start, 0, 0);
+            let mut refresh = ready_refresh(start);
             assert_eq!(refresh.advance(start, Focus::Session), Ok(Action::Wait));
             assert_eq!(
                 refresh.advance(start, Focus::Handy),
@@ -522,5 +608,35 @@ mod tests {
                 Ok(Action::Paste)
             );
         }
+    }
+
+    #[test]
+    fn activation_waits_for_both_same_process_completion_and_consumed_reopen() {
+        let start = Instant::now();
+        for (opened, reopen_seen) in [(false, false), (true, false), (false, true)] {
+            let mut refresh = Refresh::new(start, 0, 0);
+            refresh.opened = opened;
+            refresh.reopen_seen = reopen_seen;
+            assert_eq!(refresh.advance(start, Focus::Handy), Ok(Action::Wait));
+            assert_eq!(refresh.phase, Phase::AwaitingHandy);
+            assert!(refresh
+                .advance(start + ACTIVATION_TIMEOUT, Focus::Handy)
+                .is_err());
+        }
+        let mut refresh = ready_refresh(start);
+        assert_eq!(
+            refresh.advance(start, Focus::Handy),
+            Ok(Action::ActivateSession)
+        );
+    }
+
+    #[test]
+    fn only_one_requested_reopen_is_consumed_and_later_user_reopens_are_normal() {
+        assert!(!consume_activation_reopen());
+        SELF_REOPEN.with(|requested| requested.set(Some(123)));
+        assert!(consume_activation_reopen());
+        assert_eq!(REOPEN_SEEN.with(|seen| seen.get()), Some(123));
+        assert!(!consume_activation_reopen());
+        REOPEN_SEEN.with(|seen| seen.set(None));
     }
 }

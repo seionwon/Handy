@@ -630,6 +630,20 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
     #[cfg(target_os = "macos")]
+    if cli_args.check_screen_sharing_focus {
+        let applications =
+            objc2_app_kit::NSRunningApplication::runningApplicationsWithBundleIdentifier(
+                &objc2_foundation::NSString::from_str("com.pais.handy"),
+            );
+        if !applications.iter().any(|application| {
+            application.processIdentifier() != std::process::id() as i32
+                && !application.isTerminated()
+        }) {
+            eprintln!("Screen Sharing focus check requires Handy to be running.");
+            return;
+        }
+    }
+    #[cfg(target_os = "macos")]
     let replaced_instances = match macos_instance::replace_older_instances(&cli_args) {
         Ok(pids) => pids,
         Err(error) => {
@@ -877,6 +891,16 @@ pub fn run(cli_args: CliArgs) {
     // instance instead.
     if !headless_mode {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            #[cfg(target_os = "macos")]
+            if args.iter().any(|a| a == "--check-screen-sharing-focus") {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Err(error) = screen_sharing::check_focus(handle) {
+                        log::error!("[screen-sharing] focus check failed: {error}");
+                    }
+                });
+                return;
+            }
             if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
             } else if args.iter().any(|a| a == "--toggle-post-process") {
@@ -1133,6 +1157,11 @@ pub fn run(cli_args: CliArgs) {
             if macos_instance::installed_image_changed() {
                 log::info!("Installed Handy changed; restarting into the replacement build");
                 app.restart();
+            }
+            if screen_sharing::consume_activation_reopen() {
+                // NSWorkspace is refreshing this process for shared paste.
+                // Keep the settings window and tray visibility unchanged.
+                return;
             }
             // Fired when the already-running bundle is launched again from
             // Spotlight/Finder or the Dock icon is clicked. If the settings

@@ -24,6 +24,12 @@ pub struct CliArgs {
     #[arg(long)]
     pub cancel: bool,
 
+    /// Check the existing Screen Sharing session's activation round trip.
+    /// Does not read/write clipboard text or send input. Handy must be running.
+    #[cfg(target_os = "macos")]
+    #[arg(long)]
+    pub check_screen_sharing_focus: bool,
+
     /// Enable debug mode with verbose logging
     #[arg(long)]
     pub debug: bool,
@@ -66,6 +72,10 @@ pub struct CliArgs {
 impl CliArgs {
     /// These invocations control the existing app or run an independent job.
     pub fn controls_existing_or_headless(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.check_screen_sharing_focus {
+            return true;
+        }
         self.toggle_transcription
             || self.toggle_post_process
             || self.cancel

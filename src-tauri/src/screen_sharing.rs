@@ -18,7 +18,24 @@ const BUNDLE_ID: &str = "com.apple.ScreenSharing";
 const TRANSFER_DELAY_MS: u64 = 500;
 const RESTORE_DELAY_MS: u64 = 1500;
 
+mod activation;
 mod shared;
+
+pub(crate) fn consume_activation_reopen() -> bool {
+    shared::consume_activation_reopen()
+}
+
+/// Exercise the real focus path without reading or modifying clipboard data,
+/// posting keys, starting the microphone, or changing any permission.
+pub(crate) fn check_focus(app: tauri::AppHandle) -> Result<(), String> {
+    let target = ScreenSharingTarget::frontmost()?
+        .ok_or("Screen Sharing focus check requires the existing session in front")?;
+    if !target.uses_shared_clipboard()? {
+        return Err("Screen Sharing focus check requires shared clipboard ON".into());
+    }
+    let settings = crate::settings::get_settings(&app);
+    shared::check_focus(target, app, &settings)
+}
 
 type CfRef = *const c_void;
 

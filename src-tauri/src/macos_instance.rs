@@ -197,6 +197,7 @@ mod tests {
             "--toggle-transcription",
             "--toggle-post-process",
             "--cancel",
+            "--check-screen-sharing-focus",
             "--list-models",
             "--list-devices",
         ] {
