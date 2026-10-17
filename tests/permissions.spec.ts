@@ -21,8 +21,8 @@ test("a listed but denied app keeps an actionable settings button", async ({
   page,
 }) => {
   await page.goto(fixture);
-  await page.getByRole("button", { name: "Grant Permission" }).click();
-  await expect(page.getByText(/If Handy is already listed/)).toBeVisible();
+  await page.getByRole("button", { name: "Open System Settings" }).click();
+  await expect(page.getByText(/Enable Handy in System Settings/)).toBeVisible();
   await page.getByRole("button", { name: "Open System Settings" }).click();
   await expect
     .poll(() =>
@@ -31,6 +31,12 @@ test("a listed but denied app keeps an actionable settings button", async ({
       ),
     )
     .toBe(2);
+  const calls: string[] = await page.evaluate("window.permissionHarness.calls");
+  expect(
+    calls.filter((command) =>
+      command.endsWith("request_accessibility_permission"),
+    ),
+  ).toEqual([]);
   await page.evaluate("window.permissionHarness.accessibility = true");
   await expect
     .poll(() => page.evaluate("window.permissionHarness.completed"))
@@ -44,7 +50,7 @@ test("slow permission checks do not accumulate overlapping polls", async ({
   // After those first checks settle, later polls must remain sequential.
   await page.goto(fixture + "?delay=1200");
   await expect(
-    page.getByRole("button", { name: "Grant Permission" }),
+    page.getByRole("button", { name: "Open System Settings" }),
   ).toBeVisible();
   await page.evaluate(
     "window.permissionHarness.maxInFlight = window.permissionHarness.inFlight",
@@ -82,7 +88,36 @@ test("microphone permission uses the safe native request command and remains ret
 
 test("permission previews remain inert", async ({ page }) => {
   await page.goto(fixture + "?preview");
-  await page.getByRole("button", { name: "Grant Permission" }).first().click();
+  await page.getByRole("button", { name: "Open System Settings" }).click();
   expect(await page.evaluate("window.permissionHarness.calls")).toEqual([]);
   expect(await page.evaluate("window.permissionHarness.completed")).toBe(0);
 });
+
+for (const view of ["onboarding", "legacy"]) {
+  test(`${view} opens one permission pane without a second system prompt`, async ({
+    page,
+  }) => {
+    await page.goto(
+      fixture + `?requestDelay=500${view === "legacy" ? "&legacy" : ""}`,
+    );
+    const button = page.getByRole("button", { name: "Open System Settings" });
+    await expect(button).toBeVisible();
+    await button.evaluate((element) => {
+      (element as HTMLButtonElement).click();
+      (element as HTMLButtonElement).click();
+    });
+    await expect(button).toBeDisabled();
+    await expect(button).toBeEnabled();
+    const calls: string[] = await page.evaluate(
+      "window.permissionHarness.calls",
+    );
+    expect(
+      calls.filter((command) => command === "open_accessibility_settings"),
+    ).toHaveLength(1);
+    expect(
+      calls.some((command) =>
+        command.endsWith("request_accessibility_permission"),
+      ),
+    ).toBe(false);
+  });
+}

@@ -1,9 +1,10 @@
 //! Clipboard handoff to Apple's Screen Sharing client (Mac-to-Mac sessions).
 //!
-//! A local pasteboard read is not a receipt from the remote application. Use
-//! actual pasteboard data and request an explicit transfer for every paste.
-//! Automatic sharing alone can keep stale remote data while the client stays
-//! frontmost. Allow time for the network before Cmd+V or restoring the data.
+//! A local pasteboard read is not a receipt from the remote application. With
+//! shared clipboard enabled, invoke the client's native Paste menu action;
+//! forwarding Cmd+V alone can paste stale remote data. With sharing disabled,
+//! request Send Clipboard before sending the paste shortcut. Never toggle the
+//! user's clipboard setting, and allow time before restoring the local data.
 //! Called on the main thread, like the other macOS paste implementations.
 
 use log::info;
@@ -104,25 +105,97 @@ impl CfValue {
         unsafe { CFGetTypeID(self.0) == CFStringGetTypeID() && CFStringGetLength(self.0) > 0 }
     }
 
-    fn press(&self) -> Result<(), String> {
+    fn press(&self, command: &NSString) -> Result<(), String> {
         // SAFETY: self is an AX menu item and AXPress is a live CFString.
         let status = unsafe { AXUIElementPerformAction(self.0, string_ref(ns_string!("AXPress"))) };
         if status != 0 {
             return Err(format!(
-                "Screen Sharing: clipboard transfer failed (AX error {status})"
+                "Screen Sharing: {command} failed (AX error {status}). The action may already have started; check the remote text before retrying."
             ));
         }
         Ok(())
     }
 }
 
-fn require_explicit_clipboard_transfer(send_enabled: bool, shared: bool) -> Result<(), String> {
-    if send_enabled {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClipboardCommand {
+    Send,
+    Paste,
+}
+
+/// Restrict writable actions to Send Clipboard and Paste. In particular, this
+/// interface cannot change Use Shared Clipboard or activate another window.
+trait ClipboardTarget {
+    fn ensure_focused(&self) -> Result<(), String>;
+    fn shared_clipboard_enabled(&self) -> Result<bool, String>;
+    fn press_clipboard_command(&self, command: ClipboardCommand) -> Result<(), String>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasteMode {
+    Shared,
+    Manual,
+}
+
+impl PasteMode {
+    fn capture(target: &impl ClipboardTarget) -> Result<Self, String> {
+        target.ensure_focused()?;
+        let mode = if target.shared_clipboard_enabled()? {
+            Self::Shared
+        } else {
+            Self::Manual
+        };
+        target.ensure_focused()?;
+        Ok(mode)
+    }
+
+    fn ensure_current(self, target: &impl ClipboardTarget) -> Result<(), String> {
+        target.ensure_focused()?;
+        if target.shared_clipboard_enabled()? != (self == Self::Shared) {
+            return Err("Screen Sharing: clipboard sharing changed during dictation. The transcription is available in History; retry with the same connection and clipboard setting.".into());
+        }
         Ok(())
-    } else if shared {
-        Err("Screen Sharing: turn off Edit > Use Shared Clipboard so Edit > Send Clipboard is enabled, then retry. Automatic sharing can paste an earlier transcription while Screen Sharing stays in front. The new transcription is available in History.".into())
-    } else {
-        Err("Screen Sharing clipboard transfer is unavailable. Connect to a Mac in Control Mode and make sure Edit > Send Clipboard is enabled. The transcription is available in History.".into())
+    }
+
+    fn prepare(self, target: &impl ClipboardTarget) -> Result<(), String> {
+        self.ensure_current(target)?;
+        if self == Self::Manual {
+            target.press_clipboard_command(ClipboardCommand::Send)?;
+        }
+        Ok(())
+    }
+
+    fn paste(
+        self,
+        target: &impl ClipboardTarget,
+        send_keys: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.ensure_current(target)?;
+        match self {
+            // Use the client's paste action instead of forwarding a keystroke
+            // directly to the remote session. Do not retry or fall back after
+            // an AX error: a timed-out action may already have pasted the text.
+            Self::Shared => target.press_clipboard_command(ClipboardCommand::Paste),
+            Self::Manual => send_keys(),
+        }
+    }
+}
+
+pub(crate) struct ScreenSharingPaste<'a> {
+    target: &'a ScreenSharingTarget,
+    mode: PasteMode,
+}
+
+impl ScreenSharingPaste<'_> {
+    pub(crate) fn prepare(&self) -> Result<(), String> {
+        self.mode.prepare(self.target)
+    }
+
+    pub(crate) fn paste(
+        &self,
+        send_keys: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.mode.paste(self.target, send_keys)
     }
 }
 
@@ -217,33 +290,58 @@ impl ScreenSharingTarget {
         Ok(None)
     }
 
-    pub(crate) fn send_clipboard(&self) -> Result<(), String> {
-        self.ensure_focused()?;
-        let send = self.menu_item(ns_string!("281.title"), ns_string!("Send Clipboard"))?;
-        let send_enabled = send.as_ref().is_some_and(|item| {
-            item.attribute(ns_string!("AXEnabled"))
-                .is_ok_and(|value| value.is_true())
-        });
-        let shared = if send_enabled {
-            false
-        } else {
-            self.menu_item(
-                ns_string!("100521.title"),
-                ns_string!("Use Shared Clipboard"),
-            )?
-            .is_some_and(|item| {
-                item.attribute(ns_string!("AXEnabled"))
-                    .is_ok_and(|value| value.is_true())
-                    && item
-                        .attribute(ns_string!("AXMenuItemMarkChar"))
-                        .is_ok_and(|mark| mark.is_nonempty_string())
-            })
+    /// Capture the route before changing the clipboard, then keep it stable
+    /// through transfer and paste. Both ON and OFF settings are preserved.
+    pub(crate) fn clipboard_paste(&self) -> Result<ScreenSharingPaste<'_>, String> {
+        Ok(ScreenSharingPaste {
+            target: self,
+            mode: PasteMode::capture(self)?,
+        })
+    }
+}
+
+impl ClipboardTarget for ScreenSharingTarget {
+    fn ensure_focused(&self) -> Result<(), String> {
+        ScreenSharingTarget::ensure_focused(self)
+    }
+
+    fn shared_clipboard_enabled(&self) -> Result<bool, String> {
+        let shared = self.menu_item(
+            ns_string!("100521.title"),
+            ns_string!("Use Shared Clipboard"),
+        )?;
+        // Without this menu, only the explicit Send Clipboard route is safe.
+        Ok(shared.is_some_and(|item| {
+            item.attribute(ns_string!("AXMenuItemMarkChar"))
+                .is_ok_and(|mark| mark.is_nonempty_string())
+        }))
+    }
+
+    fn press_clipboard_command(&self, command: ClipboardCommand) -> Result<(), String> {
+        let (key, title, mode) = match command {
+            ClipboardCommand::Send => (
+                ns_string!("281.title"),
+                ns_string!("Send Clipboard"),
+                PasteMode::Manual,
+            ),
+            ClipboardCommand::Paste => (
+                ns_string!("171.title"),
+                ns_string!("Paste"),
+                PasteMode::Shared,
+            ),
         };
+        let item = self
+            .menu_item(key, title)?
+            .ok_or_else(|| format!("Screen Sharing: Edit > {title} is unavailable. Connect to a Mac in Control Mode. The transcription is available in History."))?;
+        if !item.attribute(ns_string!("AXEnabled"))?.is_true() {
+            return Err(format!("Screen Sharing: Edit > {title} is disabled. Check Control Mode and the focused remote text field. The transcription is available in History."));
+        }
+        // Menu lookup can take time. Recheck the same session and mode just
+        // before performing the action; never toggle a setting to make it work.
+        mode.ensure_current(self)?;
         self.ensure_focused()?;
-        require_explicit_clipboard_transfer(send_enabled, shared)?;
-        let send = send.ok_or("Screen Sharing: Send Clipboard menu item is unavailable")?;
-        send.press()?;
-        info!("[screen-sharing] requested clipboard transfer to remote Mac");
+        item.press(title)?;
+        info!("[screen-sharing] invoked Edit > {title}");
         Ok(())
     }
 }
@@ -258,31 +356,153 @@ pub(crate) fn paste_delays(before_ms: u64, after_ms: u64) -> (u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
 
-    #[test]
-    fn manual_clipboard_sharing_allows_an_explicit_transfer() {
-        assert!(require_explicit_clipboard_transfer(true, false).is_ok());
+    struct MockTarget {
+        shared: Cell<bool>,
+        focused: Cell<bool>,
+        failed_command: Option<ClipboardCommand>,
+        commands: RefCell<Vec<ClipboardCommand>>,
+    }
+
+    impl MockTarget {
+        fn new(shared: bool) -> Self {
+            Self {
+                shared: Cell::new(shared),
+                focused: Cell::new(true),
+                failed_command: None,
+                commands: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl ClipboardTarget for MockTarget {
+        fn ensure_focused(&self) -> Result<(), String> {
+            if self.focused.get() {
+                Ok(())
+            } else {
+                Err("Screen Sharing lost focus".into())
+            }
+        }
+
+        fn shared_clipboard_enabled(&self) -> Result<bool, String> {
+            Ok(self.shared.get())
+        }
+
+        fn press_clipboard_command(&self, command: ClipboardCommand) -> Result<(), String> {
+            self.commands.borrow_mut().push(command);
+            if self.failed_command == Some(command) {
+                Err("AX action timed out; it may already have run".into())
+            } else {
+                Ok(())
+            }
+        }
     }
 
     #[test]
-    fn automatic_sharing_alone_cannot_confirm_a_fresh_transfer() {
-        let error = require_explicit_clipboard_transfer(false, true).unwrap_err();
-        assert!(error.contains("Use Shared Clipboard"));
-        assert!(error.contains("Send Clipboard"));
+    fn shared_clipboard_uses_native_paste_without_send_or_synthetic_keys() {
+        let target = MockTarget::new(true);
+        let mode = PasteMode::capture(&target).unwrap();
+        let keys_sent = Cell::new(false);
+        mode.prepare(&target).unwrap();
+        assert!(target.commands.borrow().is_empty());
+        mode.paste(&target, || {
+            keys_sent.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(*target.commands.borrow(), [ClipboardCommand::Paste]);
+        assert!(!keys_sent.get());
+        assert!(target.shared.get());
     }
 
     #[test]
-    fn an_enabled_send_item_is_required_for_every_transcript() {
-        // A foreground client can retain the first remote clipboard while the
-        // local clipboard changes. A checked sharing menu must not authorize
-        // the next paste after the explicit transfer becomes unavailable.
-        assert!(require_explicit_clipboard_transfer(true, true).is_ok());
-        assert!(require_explicit_clipboard_transfer(false, true).is_err());
+    fn repeated_shared_transcriptions_each_request_a_new_native_paste() {
+        let target = MockTarget::new(true);
+        for _ in 0..2 {
+            let mode = PasteMode::capture(&target).unwrap();
+            mode.prepare(&target).unwrap();
+            mode.paste(&target, || panic!("must not send Cmd+V"))
+                .unwrap();
+        }
+        assert_eq!(
+            *target.commands.borrow(),
+            [ClipboardCommand::Paste, ClipboardCommand::Paste]
+        );
+        assert!(target.shared.get());
     }
 
     #[test]
-    fn unavailable_clipboard_transfer_must_not_paste_stale_remote_text() {
-        assert!(require_explicit_clipboard_transfer(false, false).is_err());
+    fn timed_out_native_paste_is_not_retried_or_followed_by_synthetic_keys() {
+        let mut target = MockTarget::new(true);
+        target.failed_command = Some(ClipboardCommand::Paste);
+        let mode = PasteMode::capture(&target).unwrap();
+        mode.prepare(&target).unwrap();
+        let result = mode.paste(&target, || panic!("a fallback could paste twice"));
+        assert!(result.is_err());
+        assert_eq!(*target.commands.borrow(), [ClipboardCommand::Paste]);
+        assert!(target.shared.get());
+    }
+
+    #[test]
+    fn manual_clipboard_transfers_before_forwarding_the_paste_shortcut() {
+        let target = MockTarget::new(false);
+        let mode = PasteMode::capture(&target).unwrap();
+        mode.prepare(&target).unwrap();
+        mode.paste(&target, || {
+            assert_eq!(*target.commands.borrow(), [ClipboardCommand::Send]);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(*target.commands.borrow(), [ClipboardCommand::Send]);
+        assert!(!target.shared.get());
+    }
+
+    #[test]
+    fn failed_manual_transfer_stops_before_pasting() {
+        let mut target = MockTarget::new(false);
+        target.failed_command = Some(ClipboardCommand::Send);
+        let mode = PasteMode::capture(&target).unwrap();
+        let result = mode.prepare(&target);
+        assert!(result.is_err());
+        assert_eq!(*target.commands.borrow(), [ClipboardCommand::Send]);
+    }
+
+    #[test]
+    fn clipboard_mode_changes_abort_instead_of_using_the_wrong_route() {
+        for shared in [false, true] {
+            let target = MockTarget::new(shared);
+            let mode = PasteMode::capture(&target).unwrap();
+            mode.prepare(&target).unwrap();
+            target.commands.borrow_mut().clear();
+            target.shared.set(!shared);
+            let result = mode.paste(&target, || panic!("mode changed; must not paste"));
+            assert!(result.unwrap_err().contains("clipboard sharing changed"));
+            assert!(target.commands.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn losing_focus_cancels_both_routes_before_the_paste() {
+        for shared in [false, true] {
+            let target = MockTarget::new(shared);
+            let mode = PasteMode::capture(&target).unwrap();
+            mode.prepare(&target).unwrap();
+            target.commands.borrow_mut().clear();
+            target.focused.set(false);
+            let result = mode.paste(&target, || panic!("focus changed; must not paste"));
+            assert!(result.is_err());
+            assert!(target.commands.borrow().is_empty());
+            assert_eq!(target.shared.get(), shared);
+        }
+    }
+
+    #[test]
+    fn an_unfocused_session_is_rejected_before_the_clipboard_is_changed() {
+        let target = MockTarget::new(true);
+        target.focused.set(false);
+        assert!(PasteMode::capture(&target).is_err());
+        assert!(target.commands.borrow().is_empty());
     }
 
     #[test]

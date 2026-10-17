@@ -4,6 +4,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import i18next from "i18next";
 import { I18nextProvider } from "react-i18next";
 import AccessibilityOnboarding from "../../src/components/onboarding/AccessibilityOnboarding";
+import AccessibilityPermissions from "../../src/components/AccessibilityPermissions";
 import translations from "../../src/i18n/locales/en/translation.json";
 
 const query = new URLSearchParams(location.search);
@@ -17,7 +18,7 @@ const state = {
   unmount: () => {},
 };
 Object.assign(window, {
-  __TAURI_OS_PLUGIN_INTERNALS__: { platform: "macos" },
+  __TAURI_OS_PLUGIN_INTERNALS__: { platform: "macos", os_type: "macos" },
   permissionHarness: state,
 });
 mockIPC(async (command) => {
@@ -34,10 +35,13 @@ mockIPC(async (command) => {
   if (
     ["open_accessibility_settings", "request_microphone_permission"].includes(
       command,
-    ) ||
-    command.endsWith("request_accessibility_permission")
-  )
+    )
+  ) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, Number(query.get("requestDelay") ?? 0)),
+    );
     return null;
+  }
   throw new Error(
     `Unexpected native command in permission fixture: ${command}`,
   );
@@ -52,12 +56,16 @@ state.unmount = () => root.unmount();
 root.render(
   <React.StrictMode>
     <I18nextProvider i18n={i18n}>
-      <AccessibilityOnboarding
-        preview={query.has("preview")}
-        onComplete={() => {
-          state.completed++;
-        }}
-      />
+      {query.has("legacy") ? (
+        <AccessibilityPermissions />
+      ) : (
+        <AccessibilityOnboarding
+          preview={query.has("preview")}
+          onComplete={() => {
+            state.completed++;
+          }}
+        />
+      )}
     </I18nextProvider>
   </React.StrictMode>,
 );

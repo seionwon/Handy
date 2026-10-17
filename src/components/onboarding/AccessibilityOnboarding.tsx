@@ -3,13 +3,13 @@ import { useTranslation } from "react-i18next";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
-  requestAccessibilityPermission,
   checkMicrophonePermission,
 } from "tauri-plugin-macos-permissions-api";
 import { toast } from "sonner";
 import { commands } from "@/bindings";
 import { pollPermissions } from "@/lib/permissionPolling";
 import HandyTextLogo from "../icons/HandyTextLogo";
+import QuitButton from "../QuitButton";
 import { Keyboard, Mic, Check, Loader2 } from "lucide-react";
 
 interface AccessibilityOnboardingProps {
@@ -38,6 +38,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   });
   const [pollingAttempt, setPollingAttempt] = useState(0);
   const [requesting, setRequesting] = useState(false);
+  const requestInFlightRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
@@ -117,11 +118,12 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   }, [pollingAttempt, preview, t]);
 
   const handleGrantAccessibility = async () => {
-    if (preview || requesting) return;
+    if (preview || requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
     setRequesting(true);
     try {
-      await requestAccessibilityPermission();
-      // macOS may suppress repeated prompts for an already-listed Handy app.
+      // Open one settings pane directly. The plugin's permission prompt plus
+      // this command presented two separate permission actions for one click.
       const result = await commands.openAccessibilitySettings();
       if (result.status === "error") throw new Error(result.error);
       setPermissions((prev) => ({ ...prev, accessibility: "waiting" }));
@@ -130,12 +132,14 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       console.error("Failed to request accessibility permission:", error);
       toast.error(t("onboarding.permissions.errors.requestFailed"));
     } finally {
+      requestInFlightRef.current = false;
       setRequesting(false);
     }
   };
 
   const handleGrantMicrophone = async () => {
-    if (preview || requesting) return;
+    if (preview || requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
     setRequesting(true);
     try {
       const result = isWindows
@@ -148,6 +152,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       console.error("Failed to request microphone permission:", error);
       toast.error(t("onboarding.permissions.errors.requestFailed"));
     } finally {
+      requestInFlightRef.current = false;
       setRequesting(false);
     }
   };
@@ -184,7 +189,10 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
   // Show permissions request screen
   return (
-    <div className="h-screen w-full flex flex-col p-6 gap-6 items-center justify-center">
+    <div className="relative h-screen w-full flex flex-col p-6 gap-6 items-center justify-center">
+      <div className="absolute top-4 right-4">
+        <QuitButton disabled={preview} />
+      </div>
       <div className="flex flex-col items-center gap-2">
         <HandyTextLogo width={200} />
       </div>
@@ -266,9 +274,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     disabled={requesting}
                     className="px-4 py-2 rounded-lg bg-logo-primary hover:bg-logo-primary/90 text-white text-sm font-medium transition-colors"
                   >
-                    {permissions.accessibility === "waiting"
-                      ? t("accessibility.openSettings")
-                      : t("onboarding.permissions.grant")}
+                    {t("accessibility.openSettings")}
                   </button>
                 )}
               </div>

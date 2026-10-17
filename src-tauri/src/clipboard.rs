@@ -81,6 +81,11 @@ fn paste_via_clipboard(
         (paste_delay_ms, paste_delay_after_ms)
     };
 
+    #[cfg(target_os = "macos")]
+    let screen_sharing_paste = screen_sharing
+        .map(crate::screen_sharing::ScreenSharingTarget::clipboard_paste)
+        .transpose()?;
+
     let clipboard = app_handle.clipboard();
     let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
     // Only probe for an image when there is no text to restore. Text is by far the
@@ -104,8 +109,8 @@ fn paste_via_clipboard(
         paste_delay_after_ms,
         || {
             #[cfg(target_os = "macos")]
-            if let Some(target) = screen_sharing {
-                target.send_clipboard()?;
+            if let Some(paste) = &screen_sharing_paste {
+                paste.prepare()?;
             }
             Ok(())
         },
@@ -121,6 +126,16 @@ fn paste_via_clipboard(
                             .into(),
                     );
                 }
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(paste) = &screen_sharing_paste {
+                return paste.paste(|| {
+                    with_enigo(app_handle, |enigo| match paste_method {
+                        PasteMethod::CtrlV => input::send_paste_ctrl_v(enigo, 100),
+                        PasteMethod::CtrlShiftV => input::send_paste_ctrl_shift_v(enigo, 100),
+                        _ => Err("Invalid Screen Sharing paste method".into()),
+                    })
+                });
             }
             // Send paste key combo
             #[cfg(target_os = "linux")]

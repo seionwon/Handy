@@ -1,10 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
-import {
-  checkAccessibilityPermission,
-  requestAccessibilityPermission,
-} from "tauri-plugin-macos-permissions-api";
+import { checkAccessibilityPermission } from "tauri-plugin-macos-permissions-api";
 import { commands } from "@/bindings";
 
 // Define permission state type
@@ -21,6 +18,8 @@ const AccessibilityPermissions: React.FC = () => {
   const [hasAccessibility, setHasAccessibility] = useState<boolean>(false);
   const [permissionState, setPermissionState] =
     useState<PermissionState>("request");
+  const [requesting, setRequesting] = useState(false);
+  const requestInFlightRef = useRef(false);
 
   // Accessibility permissions are only required on macOS
   const isMacOS = type() === "macos";
@@ -35,17 +34,21 @@ const AccessibilityPermissions: React.FC = () => {
 
   // Handle the unified button action based on current state
   const handleButtonClick = async (): Promise<void> => {
+    if (requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+    setRequesting(true);
     try {
-      await requestAccessibilityPermission();
       const result = await commands.openAccessibilitySettings();
       if (result.status === "error") throw new Error(result.error);
-      // After system prompt, transition to verification state
       setPermissionState("verify");
+      await checkPermissions();
     } catch (error) {
       console.error("Error requesting permissions:", error);
       setPermissionState("verify");
+    } finally {
+      requestInFlightRef.current = false;
+      setRequesting(false);
     }
-    await checkPermissions();
   };
 
   // On app boot - check permissions (only on macOS)
@@ -93,6 +96,7 @@ const AccessibilityPermissions: React.FC = () => {
         </div>
         <button
           onClick={handleButtonClick}
+          disabled={requesting}
           className={`min-h-10 ${config.className}`}
         >
           {config.text}

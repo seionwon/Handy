@@ -12,7 +12,6 @@
     "dialog:default",
     "fs:read-files",
     "macos-permissions:allow-check-accessibility-permission",
-    "macos-permissions:allow-request-accessibility-permission",
     "macos-permissions:allow-check-microphone-permission"
   ]
 }

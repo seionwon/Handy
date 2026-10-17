@@ -77,7 +77,7 @@
       "accessibility": {
         "title": "Accessibility / Device Control and Data Access",
         "description": "Required to type transcribed text into your applications.",
-        "existingEntryHint": "If Handy is already listed, enable its existing entry. If permission is still denied after replacing Handy, quit Handy, remove the old entry, add the installed Handy.app again, and reopen Handy."
+        "existingEntryHint": "Enable Handy in System Settings. If it is missing, use + to add /Applications/Handy.app. If permission is still denied after replacing Handy, quit Handy, remove the old entry, add the installed app again, and reopen Handy."
       },
       "grant": "Grant Permission",
       "granted": "Granted",
