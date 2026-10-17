@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Dostęp do dostępności",
-        "description": "Wymagany do wpisywania transkrybowanego tekstu w Twoich aplikacjach."
+        "description": "Wymagany do wpisywania transkrybowanego tekstu w Twoich aplikacjach.",
+        "existingEntryHint": "Jeśli Handy jest już na liście, włącz istniejący wpis. Jeśli po wymianie aplikacji dostęp nadal jest odmawiany, zamknij Handy, usuń stary wpis, dodaj zainstalowaną aplikację Handy.app i otwórz ją ponownie."
       },
       "grant": "Przyznaj uprawnienie",
       "granted": "Przyznano",
@@ -84,7 +85,8 @@
       "allGranted": "Wszystko gotowe!",
       "errors": {
         "checkFailed": "Nie udało się sprawdzić uprawnień. Spróbuj ponownie.",
-        "requestFailed": "Nie udało się poprosić o uprawnienie. Spróbuj ponownie."
+        "requestFailed": "Nie udało się poprosić o uprawnienie. Spróbuj ponownie.",
+        "initializeFailed": "Nie udało się uruchomić skrótów klawiaturowych i wprowadzania tekstu. Sprawdź uprawnienia Handy w ustawieniach systemowych i spróbuj ponownie."
       }
     }
   },

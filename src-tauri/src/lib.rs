@@ -11,12 +11,14 @@ mod clipboard;
 mod commands;
 pub mod engine_supervisor;
 mod helpers;
+mod history_audio_path;
 mod input;
 mod llm_client;
 mod managers;
 mod memory;
 mod overlay;
 mod paste_tx;
+mod permissions;
 pub mod portable;
 #[cfg(target_os = "macos")]
 mod screen_sharing;
@@ -730,6 +732,8 @@ pub fn run(cli_args: CliArgs) {
             commands::check_apple_intelligence_available,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
+            permissions::open_accessibility_settings,
+            permissions::request_microphone_permission,
             commands::models::get_available_models,
             commands::models::get_model_info,
             commands::models::download_model,

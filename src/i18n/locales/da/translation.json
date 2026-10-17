@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Tilgængelighedsadgang",
-        "description": "Påkrævet for at skrive den transskriberede tekst ind i dine programmer."
+        "description": "Påkrævet for at skrive den transskriberede tekst ind i dine programmer.",
+        "existingEntryHint": "Hvis Handy allerede står på listen, skal du aktivere posten. Hvis adgangen stadig afvises efter udskiftning af appen, skal du afslutte Handy, fjerne den gamle post, tilføje den installerede Handy.app og åbne den igen."
       },
       "grant": "Giv tilladelse",
       "granted": "Givet",
@@ -84,7 +85,8 @@
       "allGranted": "Alt er klar!",
       "errors": {
         "checkFailed": "Kunne ikke tjekke tilladelser. Prøv igen.",
-        "requestFailed": "Kunne ikke anmode om tilladelse. Prøv igen."
+        "requestFailed": "Kunne ikke anmode om tilladelse. Prøv igen.",
+        "initializeFailed": "Tastaturgenveje og tekstindtastning kunne ikke startes. Kontrollér Handys tilladelser i Systemindstillinger, og prøv igen."
       }
     }
   },

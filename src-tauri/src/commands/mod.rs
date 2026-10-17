@@ -139,8 +139,19 @@ pub fn check_apple_intelligence_available() -> bool {
 /// On macOS, this will return an error if accessibility permissions are not granted.
 #[specta::specta]
 #[tauri::command]
-pub fn initialize_enigo(app: AppHandle) -> Result<(), String> {
+pub async fn initialize_enigo(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || initialize_enigo_impl(app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn initialize_enigo_impl(app: AppHandle) -> Result<(), String> {
     use crate::input::EnigoState;
+    static INITIALIZATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = INITIALIZATION_LOCK
+        .lock()
+        .map_err(|_| "Input initialization lock poisoned")?;
+    crate::permissions::ensure_accessibility()?;
 
     // Check if already initialized
     if app.try_state::<EnigoState>().is_some() {
@@ -177,7 +188,18 @@ pub struct ShortcutsInitialized;
 /// This is idempotent - calling it multiple times is safe.
 #[specta::specta]
 #[tauri::command]
-pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
+pub async fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || initialize_shortcuts_impl(app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn initialize_shortcuts_impl(app: AppHandle) -> Result<(), String> {
+    static INITIALIZATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = INITIALIZATION_LOCK
+        .lock()
+        .map_err(|_| "Shortcut initialization lock poisoned")?;
+    crate::permissions::ensure_accessibility()?;
     // Check if already initialized
     if app.try_state::<ShortcutsInitialized>().is_some() {
         log::debug!("Shortcuts already initialized");
@@ -185,7 +207,7 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     }
 
     // Initialize shortcuts
-    crate::shortcut::init_shortcuts(&app);
+    crate::shortcut::init_shortcuts(&app)?;
 
     // Mark as initialized before reconciling the macOS Secure Input fallback.
     app.manage(ShortcutsInitialized);

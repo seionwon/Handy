@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Accès à l'accessibilité",
-        "description": "Nécessaire pour taper le texte transcrit dans vos applications."
+        "description": "Nécessaire pour taper le texte transcrit dans vos applications.",
+        "existingEntryHint": "Si Handy figure déjà dans la liste, activez son entrée. Si l’accès reste refusé après le remplacement de l’application, quittez Handy, supprimez l’ancienne entrée, ajoutez le Handy.app installé et rouvrez Handy."
       },
       "grant": "Accorder l'autorisation",
       "granted": "Accordé",
@@ -84,7 +85,8 @@
       "allGranted": "Tout est prêt !",
       "errors": {
         "checkFailed": "Échec de la vérification des autorisations. Veuillez réessayer.",
-        "requestFailed": "Échec de la demande d'autorisation. Veuillez réessayer."
+        "requestFailed": "Échec de la demande d'autorisation. Veuillez réessayer.",
+        "initializeFailed": "Impossible de démarrer les raccourcis clavier et la saisie de texte. Vérifiez les autorisations de Handy dans les réglages système, puis réessayez."
       }
     }
   },

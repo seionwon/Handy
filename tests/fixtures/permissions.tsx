@@ -1,0 +1,63 @@
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { mockIPC } from "@tauri-apps/api/mocks";
+import i18next from "i18next";
+import { I18nextProvider } from "react-i18next";
+import AccessibilityOnboarding from "../../src/components/onboarding/AccessibilityOnboarding";
+import translations from "../../src/i18n/locales/en/translation.json";
+
+const query = new URLSearchParams(location.search);
+const state = {
+  accessibility: query.has("granted"),
+  microphone: !query.has("microphoneDenied"),
+  calls: [] as string[],
+  completed: 0,
+  inFlight: 0,
+  maxInFlight: 0,
+  unmount: () => {},
+};
+Object.assign(window, {
+  __TAURI_OS_PLUGIN_INTERNALS__: { platform: "macos" },
+  permissionHarness: state,
+});
+mockIPC(async (command) => {
+  state.calls.push(command);
+  if (command.endsWith("check_accessibility_permission")) {
+    state.maxInFlight = Math.max(state.maxInFlight, ++state.inFlight);
+    await new Promise((resolve) =>
+      setTimeout(resolve, Number(query.get("delay") ?? 0)),
+    );
+    state.inFlight--;
+    return state.accessibility;
+  }
+  if (command.endsWith("check_microphone_permission")) return state.microphone;
+  if (
+    ["open_accessibility_settings", "request_microphone_permission"].includes(
+      command,
+    ) ||
+    command.endsWith("request_accessibility_permission")
+  )
+    return null;
+  throw new Error(
+    `Unexpected native command in permission fixture: ${command}`,
+  );
+});
+const i18n = i18next.createInstance();
+await i18n.init({
+  lng: "en",
+  resources: { en: { translation: translations } },
+});
+const root = createRoot(document.getElementById("root")!);
+state.unmount = () => root.unmount();
+root.render(
+  <React.StrictMode>
+    <I18nextProvider i18n={i18n}>
+      <AccessibilityOnboarding
+        preview={query.has("preview")}
+        onComplete={() => {
+          state.completed++;
+        }}
+      />
+    </I18nextProvider>
+  </React.StrictMode>,
+);

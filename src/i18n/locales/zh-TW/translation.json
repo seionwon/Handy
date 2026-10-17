@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "輔助使用存取",
-        "description": "需要將轉錄文字輸入到您的應用程式中"
+        "description": "需要將轉錄文字輸入到您的應用程式中",
+        "existingEntryHint": "如果列表中已有 Handy，請啟用該項目。如果更換應用程式後仍無法取得權限，請結束 Handy，刪除舊項目，重新加入已安裝的 Handy.app，然後再次開啟。"
       },
       "grant": "授予權限",
       "granted": "已授予",
@@ -84,7 +85,8 @@
       "allGranted": "全部完成！",
       "errors": {
         "checkFailed": "檢查權限失敗，請重試",
-        "requestFailed": "請求權限失敗，請重試"
+        "requestFailed": "請求權限失敗，請重試",
+        "initializeFailed": "無法啟動鍵盤快速鍵和文字輸入。請在系統設定中檢查 Handy 的權限，然後重試。"
       }
     }
   },

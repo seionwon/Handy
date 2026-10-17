@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Accés a l'accessibilitat",
-        "description": "Necessari per escriure el text transcrit a les aplicacions."
+        "description": "Necessari per escriure el text transcrit a les aplicacions.",
+        "existingEntryHint": "Si Handy ja apareix a la llista, activeu-ne l’entrada. Si després de substituir l’aplicació encara es denega el permís, tanqueu Handy, elimineu l’entrada antiga, afegiu el Handy.app instal·lat i torneu-lo a obrir."
       },
       "grant": "Concediu el permís",
       "granted": "Concedit",
@@ -84,7 +85,8 @@
       "allGranted": "Tot a punt!",
       "errors": {
         "checkFailed": "No s'han pogut comprovar els permisos. Torneu-ho a provar.",
-        "requestFailed": "No s'ha pogut sol·licitar el permís. Torneu-ho a provar."
+        "requestFailed": "No s'ha pogut sol·licitar el permís. Torneu-ho a provar.",
+        "initializeFailed": "No s’han pogut iniciar les dreceres de teclat ni l’entrada de text. Comproveu els permisos de Handy a la configuració del sistema i torneu-ho a provar."
       }
     }
   },

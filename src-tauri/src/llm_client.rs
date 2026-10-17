@@ -196,19 +196,19 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
 
     // Provider-specific auth headers
     if !api_key.is_empty() {
+        let mut authentication =
+            HeaderValue::from_str(&if provider.api_format == PostProcessApiFormat::Anthropic {
+                api_key.to_owned()
+            } else {
+                format!("Bearer {api_key}")
+            })
+            .map_err(|e| format!("Invalid authentication header: {e}"))?;
+        authentication.set_sensitive(true);
         if provider.api_format == PostProcessApiFormat::Anthropic {
-            headers.insert(
-                "x-api-key",
-                HeaderValue::from_str(api_key)
-                    .map_err(|e| format!("Invalid API key header value: {}", e))?,
-            );
+            headers.insert("x-api-key", authentication);
             headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         } else {
-            headers.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", api_key))
-                    .map_err(|e| format!("Invalid authorization header value: {}", e))?,
-            );
+            headers.insert(AUTHORIZATION, authentication);
         }
     }
 
@@ -219,6 +219,10 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
 fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwest::Client, String> {
     let headers = build_headers(provider, api_key)?;
     reqwest::Client::builder()
+        // Custom authentication headers such as x-api-key are not stripped by
+        // reqwest's cross-origin redirect handling. Never forward them to a
+        // redirect target chosen by a server.
+        .redirect(reqwest::redirect::Policy::none())
         .default_headers(headers)
         .build()
         .map_err(|e| report_reqwest_error("Failed to build HTTP client", &e))
@@ -872,12 +876,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(headers["x-api-key"], "key");
+        assert!(headers["x-api-key"].is_sensitive());
         assert_eq!(headers["anthropic-version"], "2023-06-01");
         assert!(headers.get(AUTHORIZATION).is_none());
 
         let headers =
             build_headers(&provider("custom", "http://localhost:11434/v1"), "key").unwrap();
         assert_eq!(headers[AUTHORIZATION], "Bearer key");
+        assert!(headers[AUTHORIZATION].is_sensitive());
         assert!(headers.get("x-api-key").is_none());
     }
 

@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Toegankelijkheid",
-        "description": "Vereist om getranscribeerde tekst in je applicaties te kunnen typen."
+        "description": "Vereist om getranscribeerde tekst in je applicaties te kunnen typen.",
+        "existingEntryHint": "Als Handy al in de lijst staat, schakel de bestaande vermelding dan in. Blijft de toegang geweigerd nadat de app is vervangen, sluit Handy dan af, verwijder de oude vermelding, voeg de geïnstalleerde Handy.app toe en open de app opnieuw."
       },
       "grant": "Machtiging verlenen",
       "granted": "Verleend",
@@ -84,7 +85,8 @@
       "allGranted": "Alles ingesteld!",
       "errors": {
         "checkFailed": "Machtigingen controleren mislukt. Probeer het opnieuw.",
-        "requestFailed": "Machtiging aanvragen mislukt. Probeer het opnieuw."
+        "requestFailed": "Machtiging aanvragen mislukt. Probeer het opnieuw.",
+        "initializeFailed": "Sneltoetsen en tekstinvoer konden niet worden gestart. Controleer de machtigingen van Handy in Systeeminstellingen en probeer het opnieuw."
       }
     }
   },

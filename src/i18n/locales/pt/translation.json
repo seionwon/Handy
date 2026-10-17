@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Acesso à Acessibilidade",
-        "description": "Necessário para digitar o texto transcrito em seus aplicativos."
+        "description": "Necessário para digitar o texto transcrito em seus aplicativos.",
+        "existingEntryHint": "Se o Handy já estiver na lista, ative a entrada existente. Se a permissão continuar negada após substituir o aplicativo, feche o Handy, remova a entrada antiga, adicione o Handy.app instalado e abra-o novamente."
       },
       "grant": "Conceder Permissão",
       "granted": "Concedido",
@@ -84,7 +85,8 @@
       "allGranted": "Tudo pronto!",
       "errors": {
         "checkFailed": "Erro ao verificar permissões. Por favor, tente novamente.",
-        "requestFailed": "Erro ao solicitar permissão. Por favor, tente novamente."
+        "requestFailed": "Erro ao solicitar permissão. Por favor, tente novamente.",
+        "initializeFailed": "Não foi possível iniciar os atalhos de teclado e a entrada de texto. Verifique as permissões do Handy nas configurações do sistema e tente novamente."
       }
     }
   },

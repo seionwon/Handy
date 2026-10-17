@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "辅助功能访问",
-        "description": "需要将转录文本输入到您的应用程序中。"
+        "description": "需要将转录文本输入到您的应用程序中。",
+        "existingEntryHint": "如果列表中已有 Handy，请启用该条目。如果更换应用后仍无法获得权限，请退出 Handy，删除旧条目，重新添加已安装的 Handy.app，然后再次打开。"
       },
       "grant": "授予权限",
       "granted": "已授予",
@@ -84,7 +85,8 @@
       "allGranted": "全部完成！",
       "errors": {
         "checkFailed": "检查权限失败。请重试。",
-        "requestFailed": "请求权限失败。请重试。"
+        "requestFailed": "请求权限失败。请重试。",
+        "initializeFailed": "无法启动键盘快捷键和文本输入。请在系统设置中检查 Handy 的权限，然后重试。"
       }
     }
   },

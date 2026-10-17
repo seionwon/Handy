@@ -75,8 +75,9 @@
         "description": "Required to hear your voice for transcription."
       },
       "accessibility": {
-        "title": "Accessibility Access",
-        "description": "Required to type transcribed text into your applications."
+        "title": "Accessibility / Device Control and Data Access",
+        "description": "Required to type transcribed text into your applications.",
+        "existingEntryHint": "If Handy is already listed, enable its existing entry. If permission is still denied after replacing Handy, quit Handy, remove the old entry, add the installed Handy.app again, and reopen Handy."
       },
       "grant": "Grant Permission",
       "granted": "Granted",
@@ -84,7 +85,8 @@
       "allGranted": "All set!",
       "errors": {
         "checkFailed": "Failed to check permissions. Please try again.",
-        "requestFailed": "Failed to request permission. Please try again."
+        "requestFailed": "Failed to request permission. Please try again.",
+        "initializeFailed": "Could not start keyboard shortcuts and text input. Check Handy’s permissions in System Settings, then try again."
       }
     }
   },

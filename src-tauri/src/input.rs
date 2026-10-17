@@ -152,8 +152,12 @@ pub struct EnigoState(pub Mutex<Enigo>);
 
 impl EnigoState {
     pub fn new() -> Result<Self, String> {
-        let enigo = Enigo::new(&Settings::default())
-            .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
+        // Only explicit user actions may show a macOS permission prompt.
+        let enigo = Enigo::new(&Settings {
+            open_prompt_to_get_permissions: false,
+            ..Settings::default()
+        })
+        .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
         Ok(Self(Mutex::new(enigo)))
     }
 }
@@ -164,6 +168,65 @@ pub fn get_cursor_position(app_handle: &AppHandle) -> Option<(i32, i32)> {
     let enigo_state = app_handle.try_state::<EnigoState>()?;
     let enigo = enigo_state.0.lock().ok()?;
     enigo.location().ok()
+}
+
+/// Always release synthetic keys, including on partial failure or unwinding.
+/// Leaving Cmd/Ctrl/Shift pressed affects both keyboard input and mouse clicks.
+struct HeldKeys<'a, K: Keyboard> {
+    keyboard: &'a mut K,
+    keys: Vec<Key>,
+}
+
+impl<K: Keyboard> HeldKeys<'_, K> {
+    fn release(&mut self) -> Result<(), String> {
+        let mut error = None;
+        while let Some(key) = self.keys.pop() {
+            if let Err(e) = self.keyboard.key(key, enigo::Direction::Release) {
+                error.get_or_insert_with(|| format!("Failed to release key: {e}"));
+            }
+        }
+        error.map_or(Ok(()), Err)
+    }
+}
+
+impl<K: Keyboard> Drop for HeldKeys<'_, K> {
+    fn drop(&mut self) {
+        if let Err(error) = self.release() {
+            log::error!("{error}");
+        }
+    }
+}
+
+pub(crate) fn send_key_chord<K: Keyboard>(
+    keyboard: &mut K,
+    modifiers: &[Key],
+    key: Key,
+    hold_ms: u64,
+) -> Result<(), String> {
+    let mut held = HeldKeys {
+        keyboard,
+        keys: Vec::new(),
+    };
+    for &modifier in modifiers {
+        // Track even a failed press: an OS error may follow partial delivery.
+        held.keys.push(modifier);
+        held.keyboard
+            .key(modifier, enigo::Direction::Press)
+            .map_err(|e| format!("Failed to press modifier: {e}"))?;
+    }
+    held.keys.push(key);
+    held.keyboard
+        .key(key, enigo::Direction::Press)
+        .map_err(|e| format!("Failed to press key: {e}"))?;
+    // Release the main key before any hold, as a normal key click does.
+    held.keyboard
+        .key(key, enigo::Direction::Release)
+        .map_err(|e| format!("Failed to release key: {e}"))?;
+    held.keys.pop();
+    if hold_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(hold_ms));
+    }
+    held.release()
 }
 
 /// Sends a Ctrl+V or Cmd+V paste command using platform-specific virtual key codes.
@@ -185,21 +248,7 @@ pub fn send_paste_ctrl_v(enigo: &mut Enigo, hold_ms: u64) -> Result<(), String> 
     #[cfg(target_os = "linux")]
     let (modifier_key, v_key_code) = (Key::Control, Key::Unicode('v'));
 
-    // Press modifier + V
-    enigo
-        .key(modifier_key, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press modifier key: {}", e))?;
-    enigo
-        .key(v_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click V key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-
-    enigo
-        .key(modifier_key, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
-
-    Ok(())
+    send_key_chord(enigo, &[modifier_key], v_key_code, hold_ms)
 }
 
 /// Sends a Ctrl+Shift+V paste command.
@@ -214,27 +263,7 @@ pub fn send_paste_ctrl_shift_v(enigo: &mut Enigo, hold_ms: u64) -> Result<(), St
     #[cfg(target_os = "linux")]
     let (modifier_key, v_key_code) = (Key::Control, Key::Unicode('v'));
 
-    // Press Ctrl/Cmd + Shift + V
-    enigo
-        .key(modifier_key, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press modifier key: {}", e))?;
-    enigo
-        .key(Key::Shift, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press Shift key: {}", e))?;
-    enigo
-        .key(v_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click V key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-
-    enigo
-        .key(Key::Shift, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release Shift key: {}", e))?;
-    enigo
-        .key(modifier_key, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release modifier key: {}", e))?;
-
-    Ok(())
+    send_key_chord(enigo, &[modifier_key, Key::Shift], v_key_code, hold_ms)
 }
 
 /// Sends a Shift+Insert paste command (Windows and Linux only).
@@ -246,21 +275,7 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo, hold_ms: u64) -> Result<(), St
     #[cfg(not(target_os = "windows"))]
     let insert_key_code = Key::Other(0x76); // XK_Insert (keycode 118 / 0x76, also used as fallback)
 
-    // Press Shift + Insert
-    enigo
-        .key(Key::Shift, enigo::Direction::Press)
-        .map_err(|e| format!("Failed to press Shift key: {}", e))?;
-    enigo
-        .key(insert_key_code, enigo::Direction::Click)
-        .map_err(|e| format!("Failed to click Insert key: {}", e))?;
-
-    std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-
-    enigo
-        .key(Key::Shift, enigo::Direction::Release)
-        .map_err(|e| format!("Failed to release Shift key: {}", e))?;
-
-    Ok(())
+    send_key_chord(enigo, &[Key::Shift], insert_key_code, hold_ms)
 }
 
 /// Pastes text directly using the enigo text method.
@@ -271,4 +286,85 @@ pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to send text directly: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod chord_tests {
+    use super::*;
+    use enigo::{Direction, InputError, InputResult};
+
+    #[derive(Default)]
+    struct MockKeyboard {
+        events: Vec<(Key, Direction)>,
+        fail_at: Vec<usize>,
+        panic_at: Option<usize>,
+    }
+
+    impl Keyboard for MockKeyboard {
+        fn fast_text(&mut self, _: &str) -> InputResult<Option<()>> {
+            Ok(Some(()))
+        }
+        fn raw(&mut self, _: u16, _: Direction) -> InputResult<()> {
+            Ok(())
+        }
+        fn key(&mut self, key: Key, direction: Direction) -> InputResult<()> {
+            self.events.push((key, direction));
+            let index = self.events.len();
+            assert_ne!(self.panic_at, Some(index), "simulated panic");
+            if self.fail_at.contains(&index) {
+                return Err(InputError::Simulate("simulated failure"));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn all_partial_failures_release_every_attempted_key() {
+        for fail_at in 1..=6 {
+            let mut keyboard = MockKeyboard {
+                fail_at: vec![fail_at],
+                ..Default::default()
+            };
+            assert!(
+                send_key_chord(&mut keyboard, &[Key::Meta, Key::Shift], Key::Other(9), 0).is_err()
+            );
+            for &(key, direction) in &keyboard.events {
+                if direction == Direction::Press {
+                    assert!(
+                        keyboard.events.contains(&(key, Direction::Release)),
+                        "key {key:?} was left pressed after failure {fail_at}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn release_failure_does_not_skip_other_modifiers() {
+        let mut keyboard = MockKeyboard {
+            fail_at: vec![5],
+            ..Default::default()
+        };
+        assert!(send_key_chord(&mut keyboard, &[Key::Meta, Key::Shift], Key::Other(9), 0).is_err());
+        assert_eq!(
+            keyboard.events.last(),
+            Some(&(Key::Meta, Direction::Release))
+        );
+    }
+
+    #[test]
+    fn panic_also_releases_modifiers() {
+        let mut keyboard = MockKeyboard {
+            panic_at: Some(3),
+            ..Default::default()
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = send_key_chord(&mut keyboard, &[Key::Meta, Key::Shift], Key::Other(9), 0);
+        }));
+        assert!(result.is_err());
+        assert_eq!(
+            keyboard.events.last(),
+            Some(&(Key::Meta, Direction::Release))
+        );
+    }
 }

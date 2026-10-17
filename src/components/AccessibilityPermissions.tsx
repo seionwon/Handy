@@ -5,6 +5,7 @@ import {
   checkAccessibilityPermission,
   requestAccessibilityPermission,
 } from "tauri-plugin-macos-permissions-api";
+import { commands } from "@/bindings";
 
 // Define permission state type
 type PermissionState = "request" | "verify" | "granted";
@@ -34,19 +35,17 @@ const AccessibilityPermissions: React.FC = () => {
 
   // Handle the unified button action based on current state
   const handleButtonClick = async (): Promise<void> => {
-    if (permissionState === "request") {
-      try {
-        await requestAccessibilityPermission();
-        // After system prompt, transition to verification state
-        setPermissionState("verify");
-      } catch (error) {
-        console.error("Error requesting permissions:", error);
-        setPermissionState("verify");
-      }
-    } else if (permissionState === "verify") {
-      // State is "verify" - check if permission was granted
-      await checkPermissions();
+    try {
+      await requestAccessibilityPermission();
+      const result = await commands.openAccessibilitySettings();
+      if (result.status === "error") throw new Error(result.error);
+      // After system prompt, transition to verification state
+      setPermissionState("verify");
+    } catch (error) {
+      console.error("Error requesting permissions:", error);
+      setPermissionState("verify");
     }
+    await checkPermissions();
   };
 
   // On app boot - check permissions (only on macOS)

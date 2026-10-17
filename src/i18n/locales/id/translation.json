@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Izin Aksesibilitas",
-        "description": "Diperlukan untuk mengetik teks hasil transkripsi ke aplikasi Anda."
+        "description": "Diperlukan untuk mengetik teks hasil transkripsi ke aplikasi Anda.",
+        "existingEntryHint": "Jika Handy sudah ada dalam daftar, aktifkan entrinya. Jika izin masih ditolak setelah aplikasi diganti, tutup Handy, hapus entri lama, tambahkan Handy.app yang terpasang, lalu buka kembali."
       },
       "grant": "Berikan Izin",
       "granted": "Diizinkan",
@@ -84,7 +85,8 @@
       "allGranted": "Semua siap!",
       "errors": {
         "checkFailed": "Gagal memeriksa izin. Silakan coba lagi.",
-        "requestFailed": "Gagal meminta izin. Silakan coba lagi."
+        "requestFailed": "Gagal meminta izin. Silakan coba lagi.",
+        "initializeFailed": "Pintasan keyboard dan input teks tidak dapat dimulai. Periksa izin Handy di Pengaturan Sistem, lalu coba lagi."
       }
     }
   },

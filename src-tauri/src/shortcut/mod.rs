@@ -31,13 +31,13 @@ use crate::tray;
 // Note: Commands are accessed via shortcut::handy_keys:: in lib.rs
 
 /// Initialize shortcuts using the configured implementation
-pub fn init_shortcuts(app: &AppHandle) {
+pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     let user_settings = settings::load_or_create_app_settings(app);
 
     // Check which implementation to use
     match user_settings.keyboard_implementation {
         KeyboardImplementation::Tauri => {
-            tauri_impl::init_shortcuts(app);
+            tauri_impl::init_shortcuts(app)?;
         }
         KeyboardImplementation::HandyKeys => {
             if let Err(e) = handy_keys::init_shortcuts(app) {
@@ -50,10 +50,20 @@ pub fn init_shortcuts(app: &AppHandle) {
                 settings.keyboard_implementation = KeyboardImplementation::Tauri;
                 settings::write_settings(app, settings);
 
-                tauri_impl::init_shortcuts(app);
+                if let Err(fallback_error) = tauri_impl::init_shortcuts(app) {
+                    // A failed fallback must not corrupt the user's backend
+                    // choice or permanently mark shortcuts as initialized.
+                    let mut restored = settings::get_settings(app);
+                    restored.keyboard_implementation = KeyboardImplementation::HandyKeys;
+                    settings::write_settings(app, restored);
+                    return Err(format!(
+                        "Keyboard initialization failed: {e}; fallback failed: {fallback_error}"
+                    ));
+                }
             }
         }
     }
+    Ok(())
 }
 
 /// Whether the recording lifecycle currently wants the cancel shortcut.
@@ -349,10 +359,24 @@ pub struct ImplementationChangeResult {
 /// and register them with the new implementation.
 #[tauri::command]
 #[specta::specta]
-pub fn change_keyboard_implementation_setting(
+pub async fn change_keyboard_implementation_setting(
     app: AppHandle,
     implementation: String,
 ) -> Result<ImplementationChangeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = change_keyboard_implementation_impl(app.clone(), implementation);
+        schedule_cancel_reconcile(&app);
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn change_keyboard_implementation_impl(
+    app: AppHandle,
+    implementation: String,
+) -> Result<ImplementationChangeResult, String> {
+    crate::permissions::ensure_accessibility()?;
     let current_settings = settings::get_settings(&app);
     let current_impl = current_settings.keyboard_implementation;
     let new_impl = parse_keyboard_implementation(&implementation);
@@ -365,13 +389,24 @@ pub fn change_keyboard_implementation_setting(
         });
     }
 
+    // Keep dynamic Cancel registration consistent while its backend changes.
+    #[cfg(not(target_os = "linux"))]
+    let mut cancel_registered = CANCEL_REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
+
     info!(
         "Switching keyboard implementation from {:?} to {:?}",
         current_impl, new_impl
     );
 
     // Unregister all shortcuts from the current implementation
+    if let Some(state) = app.try_state::<handy_keys::HandyKeysState>() {
+        state.stop_recording()?;
+    }
     unregister_all_shortcuts(&app, current_impl);
+    #[cfg(not(target_os = "linux"))]
+    {
+        *cancel_registered = false;
+    }
 
     // Update the setting
     let mut settings = settings::get_settings(&app);
@@ -462,11 +497,6 @@ fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementat
     let bindings = settings::get_bindings(app);
 
     for (id, binding) in bindings {
-        // Skip cancel shortcut as it's dynamically registered
-        if id == "cancel" {
-            continue;
-        }
-
         let result = match implementation {
             KeyboardImplementation::Tauri => tauri_impl::unregister_shortcut(app, binding),
             KeyboardImplementation::HandyKeys => handy_keys::unregister_shortcut(app, binding),
@@ -559,7 +589,7 @@ fn initialize_handy_keys_with_rollback(app: &AppHandle) -> Result<bool, String> 
         settings.keyboard_implementation = KeyboardImplementation::Tauri;
         settings::write_settings(app, settings);
         crate::secure_input::reconcile_fallback(app);
-        tauri_impl::init_shortcuts(app);
+        tauri_impl::init_shortcuts(app)?;
         return Err(format!(
             "Failed to initialize HandyKeys: {}. Reverted to Tauri.",
             e

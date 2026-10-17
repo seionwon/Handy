@@ -4,7 +4,8 @@ use crate::managers::{
     transcription::TranscriptionManager,
 };
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_fs::FsExt;
 
 #[tauri::command]
 #[specta::specta]
@@ -36,11 +37,24 @@ pub async fn toggle_history_entry_saved(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_audio_file_path(
-    _app: AppHandle,
+    app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
     file_name: String,
 ) -> Result<String, String> {
-    let path = history_manager.get_audio_file_path(&file_name);
+    let path = history_manager
+        .get_audio_file_path(&file_name)
+        .map_err(|e| e.to_string())?;
+    if !path.is_file() {
+        return Err("Recording file does not exist".into());
+    }
+    // Grant access to this validated audio file only, including portable
+    // installations. Other app data and arbitrary local files remain private.
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
+    app.fs_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
     path.to_str()
         .ok_or_else(|| "Invalid file path".to_string())
         .map(|s| s.to_string())
@@ -73,7 +87,9 @@ pub async fn retry_history_entry_transcription(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("History entry {} not found", id))?;
 
-    let audio_path = history_manager.get_audio_file_path(&entry.file_name);
+    let audio_path = history_manager
+        .get_audio_file_path(&entry.file_name)
+        .map_err(|e| e.to_string())?;
     let samples = crate::audio_toolkit::read_wav_samples(&audio_path)
         .map_err(|e| format!("Failed to load audio: {}", e))?;
 

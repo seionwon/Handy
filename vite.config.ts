@@ -3,7 +3,9 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 
-const host = process.env.TAURI_DEV_HOST;
+// This desktop app only needs a local dev server. In particular, never expose
+// Vite's module-fetch WebSocket to the LAN via TAURI_DEV_HOST (GHSA-p9ff-h696-f583).
+const host = "127.0.0.1";
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
@@ -35,14 +37,12 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
+    host,
+    hmr: {
+      protocol: "ws",
+      host: "localhost",
+      port: 1421,
+    },
     watch: {
       // 3. tell vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],

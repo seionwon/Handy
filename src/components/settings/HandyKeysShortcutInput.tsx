@@ -48,6 +48,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   // arrived — e.g. while macOS Secure Input is active (issue #1578).
   const keyedShortcutRef = useRef<string>("");
   const modifierOnlyShortcutRef = useRef<string>("");
+  const committingRef = useRef(false);
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
@@ -92,6 +93,8 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     const setupListener = async () => {
       // Listen for key events from backend
       const commitAndStop = async (keysToCommit: string) => {
+        if (committingRef.current || cleanup) return;
+        committingRef.current = true;
         try {
           await updateBinding(shortcutId, keysToCommit);
         } catch (error) {
@@ -130,7 +133,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       const unlisten = await listen<HandyKeysEvent>(
         "handy-keys-event",
         async (event) => {
-          if (cleanup) return;
+          if (cleanup || committingRef.current) return;
 
           const { hotkey_string, is_key_down, key, modifiers } = event.payload;
 
@@ -167,7 +170,21 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
         },
       );
 
-      unlistenRef.current = unlisten;
+      const unlistenStopped = await listen(
+        "handy-keys-recording-stopped",
+        () => {
+          if (!cleanup && !committingRef.current) void cancelRecording();
+        },
+      );
+      const stopListening = () => {
+        unlisten();
+        unlistenStopped();
+      };
+      if (cleanup) {
+        stopListening();
+      } else {
+        unlistenRef.current = stopListening;
+      }
     };
 
     setupListener();
@@ -238,6 +255,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
         return;
       }
       setIsRecording(true);
+      committingRef.current = false;
       setCurrentKeys("");
       currentKeysRef.current = "";
       keyedShortcutRef.current = "";

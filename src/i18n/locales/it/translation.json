@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Accesso all'Accessibilità",
-        "description": "Necessario per digitare il testo trascritto nelle tue applicazioni."
+        "description": "Necessario per digitare il testo trascritto nelle tue applicazioni.",
+        "existingEntryHint": "Se Handy è già nell’elenco, attiva la voce esistente. Se l’accesso è ancora negato dopo aver sostituito l’app, chiudi Handy, rimuovi la vecchia voce, aggiungi Handy.app dalla posizione di installazione e riaprilo."
       },
       "grant": "Concedi Permesso",
       "granted": "Concesso",
@@ -84,7 +85,8 @@
       "allGranted": "Tutto pronto!",
       "errors": {
         "checkFailed": "Impossibile verificare i permessi. Riprova.",
-        "requestFailed": "Impossibile richiedere il permesso. Riprova."
+        "requestFailed": "Impossibile richiedere il permesso. Riprova.",
+        "initializeFailed": "Impossibile avviare le scorciatoie da tastiera e l’inserimento di testo. Controlla i permessi di Handy nelle impostazioni di sistema e riprova."
       }
     }
   },

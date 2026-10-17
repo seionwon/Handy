@@ -32,7 +32,10 @@ import { WhatsNewGate } from "./components/whats-new";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
+import { createInputInitializer } from "@/lib/inputInitialization";
 import { deleteRetiredModel } from "@/components/onboarding/retiredModels";
+
+const initializeInputSystem = createInputInitializer(commands);
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 
 type OnboardingStep = "accessibility" | "migration" | "model" | "done";
@@ -111,16 +114,25 @@ function App() {
   useEffect(() => {
     if (onboardingStep === "done" && !hasCompletedPostOnboardingInit.current) {
       hasCompletedPostOnboardingInit.current = true;
-      Promise.all([
-        commands.initializeEnigo(),
-        commands.initializeShortcuts(),
-      ]).catch((e) => {
-        console.warn("Failed to initialize:", e);
-      });
+      const initialize = async () => {
+        try {
+          await initializeInputSystem();
+        } catch (error) {
+          hasCompletedPostOnboardingInit.current = false;
+          console.error("Failed to initialize input:", error);
+          toast.error(t("onboarding.permissions.errors.initializeFailed"), {
+            action: {
+              label: t("onboarding.migration.retry"),
+              onClick: () => void initialize(),
+            },
+          });
+        }
+      };
+      void initialize();
       refreshAudioDevices();
       refreshOutputDevices();
     }
-  }, [onboardingStep, refreshAudioDevices, refreshOutputDevices]);
+  }, [onboardingStep, refreshAudioDevices, refreshOutputDevices, t]);
 
   // Handle keyboard shortcuts for debug mode toggle
   useEffect(() => {

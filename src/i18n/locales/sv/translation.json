@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Hjälpmedelsåtkomst",
-        "description": "Krävs för att skriva transkriberad text i dina program."
+        "description": "Krävs för att skriva transkriberad text i dina program.",
+        "existingEntryHint": "Om Handy redan finns i listan, aktivera den befintliga posten. Om åtkomsten fortfarande nekas efter att appen har ersatts, avsluta Handy, ta bort den gamla posten, lägg till den installerade Handy.app och öppna den igen."
       },
       "grant": "Bevilja behörighet",
       "granted": "Beviljad",
@@ -84,7 +85,8 @@
       "allGranted": "Allt klart!",
       "errors": {
         "checkFailed": "Misslyckades med att kontrollera behörigheter. Försök igen.",
-        "requestFailed": "Misslyckades med att begära behörighet. Försök igen."
+        "requestFailed": "Misslyckades med att begära behörighet. Försök igen.",
+        "initializeFailed": "Tangentbordsgenvägar och textinmatning kunde inte startas. Kontrollera Handys behörigheter i Systeminställningar och försök igen."
       }
     }
   },

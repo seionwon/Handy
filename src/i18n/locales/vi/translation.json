@@ -76,7 +76,8 @@
       },
       "accessibility": {
         "title": "Quyền truy cập Trợ năng",
-        "description": "Cần thiết để nhập văn bản đã chuyển đổi vào các ứng dụng của bạn."
+        "description": "Cần thiết để nhập văn bản đã chuyển đổi vào các ứng dụng của bạn.",
+        "existingEntryHint": "Nếu Handy đã có trong danh sách, hãy bật mục hiện có. Nếu quyền vẫn bị từ chối sau khi thay ứng dụng, hãy thoát Handy, xóa mục cũ, thêm Handy.app đã cài đặt rồi mở lại."
       },
       "grant": "Cấp quyền",
       "granted": "Đã cấp",
@@ -84,7 +85,8 @@
       "allGranted": "Hoàn tất!",
       "errors": {
         "checkFailed": "Không thể kiểm tra quyền. Vui lòng thử lại.",
-        "requestFailed": "Không thể yêu cầu quyền. Vui lòng thử lại."
+        "requestFailed": "Không thể yêu cầu quyền. Vui lòng thử lại.",
+        "initializeFailed": "Không thể khởi động phím tắt và nhập văn bản. Hãy kiểm tra quyền của Handy trong Cài đặt hệ thống rồi thử lại."
       }
     }
   },
