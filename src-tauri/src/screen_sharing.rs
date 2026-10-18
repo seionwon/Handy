@@ -9,7 +9,7 @@
 
 use log::info;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSRunningApplication, NSWorkspace};
+use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{ns_string, NSBundle, NSString};
 use std::ffi::c_void;
 use std::ptr;
@@ -18,12 +18,8 @@ const BUNDLE_ID: &str = "com.apple.ScreenSharing";
 const TRANSFER_DELAY_MS: u64 = 500;
 const RESTORE_DELAY_MS: u64 = 1500;
 
-mod activation;
+mod focus_panel;
 mod shared;
-
-pub(crate) fn consume_activation_reopen() -> bool {
-    shared::consume_activation_reopen()
-}
 
 /// Exercise the real focus path without reading or modifying clipboard data,
 /// posting keys, starting the microphone, or changing any permission.
@@ -214,7 +210,6 @@ impl ScreenSharingPaste<'_> {
 
 pub(crate) struct ScreenSharingTarget {
     pid: i32,
-    running_app: Retained<NSRunningApplication>,
     application: CfValue,
     window: CfValue,
     bundle: Retained<NSBundle>,
@@ -249,7 +244,6 @@ impl ScreenSharingTarget {
         let window = application.attribute(ns_string!("AXFocusedWindow"))?;
         Ok(Some(Self {
             pid,
-            running_app: app,
             application,
             window,
             bundle,

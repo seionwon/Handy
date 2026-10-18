@@ -24,7 +24,7 @@ pub struct CliArgs {
     #[arg(long)]
     pub cancel: bool,
 
-    /// Check the existing Screen Sharing session's activation round trip.
+    /// Check the existing Screen Sharing window's key-focus round trip.
     /// Does not read/write clipboard text or send input. Handy must be running.
     #[cfg(target_os = "macos")]
     #[arg(long)]

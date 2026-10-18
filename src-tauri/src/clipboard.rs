@@ -837,7 +837,7 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     );
 
     // Apple's shared clipboard sends fresh promises when its session becomes
-    // key again. Refresh activation asynchronously, leaving AppKit free to
+    // key again. Refresh key-window focus asynchronously, leaving AppKit free to
     // deliver that change before Cmd+V. Its ordinary Paste menu is disabled
     // for the remote canvas, and a longer sleep alone cannot refresh it.
     #[cfg(target_os = "macos")]

@@ -1158,11 +1158,6 @@ pub fn run(cli_args: CliArgs) {
                 log::info!("Installed Handy changed; restarting into the replacement build");
                 app.restart();
             }
-            if screen_sharing::consume_activation_reopen() {
-                // NSWorkspace is refreshing this process for shared paste.
-                // Keep the settings window and tray visibility unchanged.
-                return;
-            }
             // Fired when the already-running bundle is launched again from
             // Spotlight/Finder or the Dock icon is clicked. If the settings
             // window is hidden, the user is likely looking for a tray icon

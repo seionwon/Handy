@@ -1,68 +1,53 @@
 # Screen Sharing clipboard modes
 
-**0.9.11 failed with shared clipboard ON in actual use.** The installed app logged `Screen Sharing: Edit > Paste is disabled` twice on 2026-10-17. The local Paste menu is not a usable remote-canvas paste action. Its mocked command-routing tests did not detect that native behavior.
+The user confirmed fresh remote input with 0.9.14 on 2026-10-18, and reported window flicker plus temporarily unavailable menu-bar/mouse interaction. Versions 0.9.13–0.9.14 refreshed clipboard sharing by activating Handy and then Screen Sharing. That full-app round trip could disturb the session's window/menu/focus state.
 
-**0.9.12 also failed in actual use.** On 2026-10-17, the installed app repeatedly logged `Handy could not refresh session activation` before publishing clipboard text. Calling `NSRunningApplication.activateWithOptions` for Handy returned false. The earlier state-machine tests did not exercise that native request.
-
-**0.9.13 uses `NSWorkspace` to open the existing Handy process, then yields activation back to the same session. Live remote text receipt remains unverified.**
+**0.9.15 uses a transparent nonactivating panel to refresh only window key focus. Screen Sharing remains the foreground application and Use Shared Clipboard remains ON.** There is no `NSWorkspace` app-open request, application activation, activation-policy change, settings-window reopen, mouse injection or cursor-capture manipulation in this route.
 
 ## Behavior
 
-| Use Shared Clipboard | Handy action                                                                                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| ON                   | Briefly activate Handy, publish fresh text after activation, return to the same Screen Sharing window, wait, then send the paste shortcut once. |
-| OFF                  | Publish text, invoke localized **Edit → Send Clipboard**, wait, then send the paste shortcut.                                                   |
+| Use Shared Clipboard | Handy action                                                                                                                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ON                   | Briefly borrow window key focus with an invisible, mouse-transparent panel, publish text, hide the panel to restore the original window's key focus, wait, then send the paste shortcut once. |
+| OFF                  | Publish text, invoke localized **Edit → Send Clipboard**, wait, then send the paste shortcut.                                                                                                 |
 
-The Screen Sharing client inspected on this Mac publishes shared clipboard promises when its session window becomes key. An in-place clipboard write while the same window remains key need not refresh those promises. The new route reproduces copying in a local app and returning to Screen Sharing. It uses public `NSWorkspace` and cooperative `NSApplication`/`NSRunningApplication` activation APIs; it does not modify Apple's app, call its private clipboard APIs, toggle the sharing checkbox, or inject mouse movements.
+The Apple client inspected on this Mac refreshes shared clipboard promises when its session window becomes key. An in-place clipboard write while that window remains key can leave stale promises. The key-window round trip preserves that refresh while avoiding a full application activation round trip. Both **Paste** and **Send Clipboard** can be disabled with sharing ON; neither menu is used by the ON route.
 
-The activation flow follows [Apple’s cooperative activation guidance](https://developer.apple.com/documentation/appkit/passing-control-from-one-app-to-another-with-cooperative-activation).
+The implementation uses public [nonactivating NSPanel behavior](https://developer.apple.com/documentation/appkit/nswindow/stylemask-swift.struct/nonactivatingpanel) and [window collection behaviors](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct). The panel has zero alpha, ignores mouse events, has no animation or shadow, and is excluded from the window menu and restoration. Its collection behavior supports joining the current Space and full-screen content; on macOS 13+ it also joins other apps' full-screen/Stage Manager sets. It never becomes the main window or changes Handy's Dock/tray policy.
 
-Both **Paste** and **Send Clipboard** can be disabled with sharing ON. Neither menu is used by the new ON path. Ordinary local-to-remote copy/paste remains available because sharing stays ON throughout.
+## Transaction and bounds
 
-## Transaction and safety
+- Capture the original Screen Sharing process, window, mode and clipboard. Revalidate the window/mode immediately before requesting panel focus.
+- Observe that the panel actually has key focus while Screen Sharing remains foreground. A request alone never authorizes publication. Wait at most two seconds per focus phase.
+- While the panel owns key focus, check only foreground identity, panel state, clipboard revision and cancellation. Do not perform another process's Accessibility queries in this interval; a stalled query must not prolong borrowed key focus.
+- Publish text, then hide the panel. Verify the original focused session window and sharing mode after release, before starting the transfer delay.
+- During waits, avoid repeated AX menu/window polling. Validate again immediately before paste and optional auto-submit. A switched app/window, changed clipboard/mode or cancellation prevents paste.
+- Keep AppKit objects on the main thread. A worker schedules short checks and never holds those objects. The panel is hidden on every completion/error path and on drop; cleanup never activates Screen Sharing after the user changes apps.
+- Wait at least 500 ms after return before paste and 1,500 ms after injection before clipboard restoration, respecting larger user delays. Send one chord, retain the restoration wait on partial input errors, and do not retry automatically.
+- Preserve newer user copies. Reject overlapping shared pastes before changing the clipboard; their text remains in History.
 
-- Capture the original process, window, clipboard mode, and clipboard contents before requesting activation.
-- Open the existing bundle with `NSWorkspace`, with new instances and running-app substitution disabled. Require a completion naming the current PID, consume the matching Reopen without changing settings/tray visibility, and observe Handy actually becoming foreground before publishing text. All three must occur within the activation deadline.
-- On macOS 14+, yield activation to the original Screen Sharing process before requesting its activation. Earlier macOS versions use the original activation API.
-- Request return to the original session only while Handy remains the active app. Observe that the same window really returned before starting the transfer delay.
-- Bound each activation phase to two seconds. Cancel before paste on a different foreground app, changed session window, clipboard mode change, intervening copy, or dictation cancellation. Preserve newer user copies.
-- Keep the main run loop free between phases. A worker schedules short main-thread checks; it never holds AppKit or Accessibility objects. Retain the sharing checkbox for the transaction instead of repeatedly traversing another process's full menu tree.
-- Apply at least 500 ms after the session returns before paste, and 1,500 ms after injection before restoring clipboard contents. Honor larger user delays. These delays allow transfer; they are not a remote receipt.
-- Send the paste chord once. If injection reports an error after partial delivery, keep the restoration wait and report failure without retrying or switching input routes.
-- Finish clipboard handling and optional auto-submit in the asynchronous transaction. Auto-submit requires the same focused session, unchanged clipboard and mode, and no cancellation. A newer user copy is never overwritten.
-- Reject an overlapping shared paste before it alters the clipboard. Its transcription remains in History.
+Reliable Paste remains bypassed: a local pasteboard read cannot prove remote text receipt. The same-version reinstall PKG from 0.9.14 remains the distribution format.
 
-Reliable Paste remains bypassed for Screen Sharing. A local pasteboard read is not proof that a remote app consumed the new text.
+## Verification
 
-## Automated coverage
+Fourteen Screen Sharing state/routing tests cover observed key focus, timeouts, changed apps, unexpected panel focus during transfer, per-dictation refresh, single injection, larger delays, and OFF-mode cancellation/routing. Clipboard transaction, key-release and process-replacement checks cover the surrounding path. The tests do not post input or change the clipboard.
 
-The native Rust tests exercise the activation state machine and manual transfer through mocks, without requesting permissions, activating real apps, changing the system clipboard, or posting input. They cover observed activation versus request acceptance, return timeouts, user focus changes, per-dictation refresh, a single paste, preservation of longer delays, rejection of shared mode in the synchronous path, and OFF-mode transfer and cancellation.
+A separate AppKit probe on this Mac confirmed that a nonactivating panel emits the original local window's resign-key and become-key notifications while its application stays foreground. With the actual connected Screen Sharing window, a fully transparent standard NSPanel under Regular activation policy became key and released it without changing foreground PID, Space, or session-window geometry. These probes did not read clipboard text or send keys/mouse input. The observed session was windowed; full-screen and Stage Manager use still require live validation.
 
-For 0.9.13, 16 Screen Sharing tests, eight clipboard transaction tests, three key-release tests, and four process-replacement tests passed (31 total). Regression coverage includes same-process completion/Reopen gating, suppression of exactly one requested Reopen, and rejection of activation from unbundled test processes. Clipboard transaction and key-release tests cover the surrounding input path. They include restoration after preparation/key failures and key release after partial errors or panics. Lint, formatting, and release clippy also passed; clippy reported only the existing model-manager formatting warnings. None of these tests establishes live transfer behavior of Apple's client, network latency, or the remote application's paste handling.
+The exact signed 0.9.15 PKG payload also passed the production GUI/AX focus check on 2026-10-18, running under Regular application policy with its existing approval. The panel released key focus after 62 ms and the original window was confirmed after another 56 ms. An independent NSWorkspace observer recorded no other app activation, zero Space changes and unchanged visible session-window bounds during this check. No clipboard data or input was sent. This validates the runtime focus path, separately from an attended Installer upgrade.
 
-## Native activation verification
-
-An activation-only AppKit probe on this Mac (macOS 27.0.1) reproduced the rejection of direct self-activation. `NSWorkspace.openApplicationAtURL` activated the same process successfully, including with a Reopen handler that shows no window. Cooperative return to the original foreground app also succeeded. The probe read no clipboard text and posted no input.
-
-The installed **0.9.13** passed the production focus diagnostic on 2026-10-17 with **Use Shared Clipboard ON**. The log confirmed the same running Handy process, consumption of its own Reopen, and observed return to the original Screen Sharing window. Its GUI PID stayed unchanged during the check. No clipboard text or input was sent. During installation, 0.9.13 also normally replaced the running 0.9.12 process and initialized input and shortcuts using the existing permission grant.
-
-Handy exposes a diagnostic that uses the production activation path against the already-connected, foreground Screen Sharing window with sharing ON:
+The production focus path can be checked with:
 
 ```sh
 /Applications/Handy.app/Contents/MacOS/handy --check-screen-sharing-focus
 ```
 
-Handy must already be running. The command forwards to that process and changes focus briefly; it skips clipboard snapshots, clipboard revision checks, publication/restoration, paste keys, microphone use, and auto-submit. A successful round trip logs `focus check passed` with no transcript or connection address. It verifies native focus handling only. It cannot establish fresh remote text receipt.
+Handy must already be running, and the existing Screen Sharing session must be foreground with sharing ON. The command forwards to that process and exercises the real panel/AX path, skipping clipboard snapshots/revision reads, publication/restoration, paste keys, microphone use and auto-submit. Success logs `focus check passed` and phase timings without transcript text or connection addresses.
 
-## Live validation still required
+**Native focus verification is not proof of fresh remote text receipt or resolution of the reported menu/mouse symptoms.** Those require actual use of the new version.
 
-Use a 0.9.13 build with Apple's Screen Sharing app connected to another Mac in Control Mode and Handy's **Clipboard (Cmd+V)** method.
+## Live checks
 
-1. Keep **Use Shared Clipboard ON** throughout.
-2. In an empty remote editor, dictate two different sentences. Each operation should briefly activate Handy and return to the same remote window. Compare both results with History; the second must not repeat the first.
-3. Copy different text in a local app and paste into the remote editor normally. Dictate another sentence afterwards.
-4. Repeat with Korean using a Korean-capable model and in the target applications and connection types actually used.
-5. Switch to another local app, change remote windows, cancel, or copy other text before paste. Verify cancellation and preservation of the newer copy.
-6. With sharing OFF, verify the existing Send Clipboard path still works.
+Keep sharing ON while dictating two different sentences in the same remote field. Compare with History and verify the second does not repeat the first. Alternate ordinary local-to-remote copy/paste with dictation, including Korean where used. Observe menu-bar edge reveal, mouse movement/clicks and window stability during processing, transfer and restoration. Repeat in the actual windowed/full-screen/Stage Manager configurations and target applications used.
 
-If this fails, retain the non-content `[screen-sharing]` phase/error logs, both macOS versions, connection type, target app, and configured delays. Do not log dictated text or remote connection addresses. A log saying the chord was sent is not evidence the remote field received fresh text.
+Changing apps/windows, cancelling, or making another copy before paste should cancel or preserve the newer copy. Sharing OFF should retain the existing Send Clipboard behavior. Retain only non-content phase/error logs, OS versions, connection type and configured delays when diagnosing a failure. A log saying the chord was sent is not a remote receipt.

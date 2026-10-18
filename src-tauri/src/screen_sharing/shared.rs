@@ -3,8 +3,10 @@
 //! Screen Sharing publishes clipboard promises when its session becomes key;
 //! changing the pasteboard while its canvas remains key need not refresh them.
 //! Its Edit > Paste item belongs to local responders and can be disabled even
-//! while remote keyboard input works. Use public app activation APIs to briefly
-//! activate Handy, return to the SAME session, then send the paste chord once.
+//! while remote keyboard input works. Use public AppKit window APIs to briefly
+//! borrow key-window focus with a nonactivating panel, then release it back
+//! to the SAME session and send the paste chord once. Screen Sharing remains
+//! the foreground application, including while its menu bar is hidden.
 //! All native objects stay on the main thread. The worker only schedules ticks,
 //! so AppKit can actually deliver activation changes between the phases.
 
@@ -21,19 +23,19 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(2);
+const FOCUS_TIMEOUT: Duration = Duration::from_secs(2);
 const TICK_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Focus {
-    Handy,
+    Panel,
     Session,
     Other,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
-    AwaitingHandy,
+    AwaitingPanel,
     AwaitingSession,
     Transferring,
     Restoring,
@@ -42,7 +44,7 @@ enum Phase {
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     Wait,
-    ActivateSession,
+    ReleasePanel,
     Paste,
     Finish,
 }
@@ -52,46 +54,43 @@ struct Refresh {
     since: Instant,
     transfer_delay: Duration,
     restore_delay: Duration,
-    opened: bool,
-    reopen_seen: bool,
 }
 
 impl Refresh {
     fn new(now: Instant, before_ms: u64, after_ms: u64) -> Self {
         let (before_ms, after_ms) = super::paste_delays(before_ms, after_ms);
         Self {
-            phase: Phase::AwaitingHandy,
+            phase: Phase::AwaitingPanel,
             since: now,
             transfer_delay: Duration::from_millis(before_ms),
             restore_delay: Duration::from_millis(after_ms),
-            opened: false,
-            reopen_seen: false,
         }
     }
 
     fn advance(&mut self, now: Instant, focus: Focus) -> Result<Action, String> {
         let elapsed = now.duration_since(self.since);
-        if matches!(self.phase, Phase::AwaitingHandy | Phase::AwaitingSession)
-            && elapsed >= ACTIVATION_TIMEOUT
+        if matches!(self.phase, Phase::AwaitingPanel | Phase::AwaitingSession)
+            && elapsed >= FOCUS_TIMEOUT
         {
             return Err(format!(
-                "Screen Sharing: {:?} activation timed out; no paste was sent",
+                "Screen Sharing: {:?} window focus timed out; no paste was sent",
                 self.phase
             ));
         }
         match (self.phase, focus) {
-            (Phase::AwaitingHandy, Focus::Handy) if self.opened && self.reopen_seen => {
+            (Phase::AwaitingPanel, Focus::Panel) => {
                 self.phase = Phase::AwaitingSession;
                 self.since = now;
-                Ok(Action::ActivateSession)
+                Ok(Action::ReleasePanel)
             }
             (Phase::AwaitingSession, Focus::Session) => {
                 self.phase = Phase::Transferring;
                 self.since = now;
                 Ok(Action::Wait)
             }
-            (Phase::AwaitingHandy, Focus::Session | Focus::Handy)
-            | (Phase::AwaitingSession, Focus::Handy) => Ok(Action::Wait),
+            (Phase::AwaitingPanel, Focus::Session) | (Phase::AwaitingSession, Focus::Panel) => {
+                Ok(Action::Wait)
+            }
             (Phase::Transferring, Focus::Session) => {
                 if elapsed >= self.transfer_delay {
                     self.phase = Phase::Restoring;
@@ -129,26 +128,13 @@ struct Pending {
     paste_error: Option<String>,
     cancellation: Option<(Arc<AudioRecordingManager>, u64)>,
     focus_only: bool,
-    activation_status: Option<mpsc::Receiver<Result<(), String>>>,
+    panel: super::focus_panel::FocusPanel,
 }
 
 // AX and AppKit objects must never cross to the scheduling worker.
 thread_local! {
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
     static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static SELF_REOPEN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-    static REOPEN_SEEN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-}
-
-pub(super) fn consume_activation_reopen() -> bool {
-    SELF_REOPEN.with(|requested| match requested.take() {
-        Some(id) => {
-            REOPEN_SEEN.with(|seen| seen.set(Some(id)));
-            info!("[screen-sharing] consumed session-refresh reopen; settings window unchanged");
-            true
-        }
-        None => false,
-    })
 }
 
 impl Pending {
@@ -163,11 +149,27 @@ impl Pending {
     }
 
     fn focus(&self) -> Focus {
-        match NSWorkspace::sharedWorkspace().frontmostApplication() {
-            Some(app) if app.processIdentifier() == self.target.pid => Focus::Session,
-            Some(app) if app.processIdentifier() == std::process::id() as i32 => Focus::Handy,
-            _ => Focus::Other,
+        if NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .is_none_or(|app| app.processIdentifier() != self.target.pid)
+        {
+            Focus::Other
+        } else if self.panel.is_key() {
+            Focus::Panel
+        } else {
+            Focus::Session
         }
+    }
+
+    fn ensure_target(&self) -> Result<(), String> {
+        if self.focus() == Focus::Other {
+            return Err("Screen Sharing: user changed apps; paste cancelled".into());
+        }
+        self.target.ensure_same_window()?;
+        if !self.target.shared_clipboard_enabled()? {
+            return Err("Screen Sharing: clipboard mode changed before paste".into());
+        }
+        Ok(())
     }
 
     fn send_paste(&self, app: &AppHandle) -> Result<(), String> {
@@ -190,22 +192,6 @@ impl Pending {
     }
 
     fn tick(&mut self, app: &AppHandle) -> Result<bool, String> {
-        if self.refresh.phase == Phase::AwaitingHandy && !self.refresh.opened {
-            if let Some(status) = &self.activation_status {
-                match status.try_recv() {
-                    Ok(result) => {
-                        result?;
-                        self.refresh.opened = true;
-                        info!("[screen-sharing] NSWorkspace confirmed the existing Handy process");
-                    }
-                    Err(mpsc::TryRecvError::Empty) => {}
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        return Err("Screen Sharing: app activation completion was lost".into())
-                    }
-                }
-            }
-        }
-        self.refresh.reopen_seen = REOPEN_SEEN.with(|seen| seen.get() == Some(self.id));
         if self.refresh.phase != Phase::Restoring {
             if self.cancelled() {
                 return Err("Screen Sharing: dictation cancelled before paste".into());
@@ -215,32 +201,35 @@ impl Pending {
                     "Screen Sharing: clipboard changed before paste; new copy preserved".into(),
                 );
             }
-            self.target.ensure_same_window()?;
-            if !self.target.shared_clipboard_enabled()? {
-                return Err("Screen Sharing: clipboard mode changed before paste".into());
-            }
         }
         let previous_phase = self.refresh.phase;
-        match self.refresh.advance(Instant::now(), self.focus())? {
+        let now = Instant::now();
+        let phase_ms = now.duration_since(self.refresh.since).as_millis();
+        match self.refresh.advance(now, self.focus())? {
             Action::Wait => {
                 if previous_phase == Phase::AwaitingSession
                     && self.refresh.phase == Phase::Transferring
                 {
-                    info!("[screen-sharing] observed original session return; waiting for clipboard transfer");
+                    self.ensure_target()?;
+                    info!("[screen-sharing] original window focus restored after {phase_ms} ms; Screen Sharing stayed foreground");
                     if self.focus_only {
-                        info!("[screen-sharing] focus check passed: original window restored with sharing ON; no clipboard text or keys sent");
+                        info!("[screen-sharing] focus check passed: sharing ON, same foreground app, panel released; no clipboard text or keys sent");
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Action::ActivateSession => {
+            Action::ReleasePanel => {
+                // Do not query another app's AX menu/window while the panel
+                // owns key focus. Those IPC calls can stall. Validate the
+                // original window immediately before borrowing, then again
+                // after release and immediately before paste.
                 if self.cancelled() || !self.clipboard_unchanged() {
                     return Err(
                         "Screen Sharing: clipboard or dictation changed before publication".into(),
                     );
                 }
-                // Publish only AFTER the client has really resigned key status.
+                // Publish only AFTER the original session window resigned key status.
                 // This matches copying in a local app and returning to VNC;
                 // its old promise cleanup cannot consume this change first.
                 if !self.focus_only {
@@ -250,17 +239,14 @@ impl Pending {
                     self.revision = NSPasteboard::generalPasteboard().changeCount();
                     self.published = true;
                 }
-                // Only return while Handy still owns the activation we requested.
-                // Never use ActivateIgnoringOtherApps or activate all windows.
-                if self.focus() != Focus::Handy {
+                // A lost panel focus means the user intervened before release.
+                if self.focus() != Focus::Panel {
                     return Err(
-                        "Screen Sharing: user changed focus before return; paste cancelled".into(),
+                        "Screen Sharing: user changed focus before release; paste cancelled".into(),
                     );
                 }
-                super::activation::return_to_session(&self.target.running_app)?;
-                info!(
-                    "[screen-sharing] returning to the original session with shared clipboard ON"
-                );
+                self.panel.release();
+                info!("[screen-sharing] released nonactivating panel after {phase_ms} ms; sharing remains ON");
                 Ok(false)
             }
             Action::Paste => {
@@ -283,13 +269,7 @@ impl Pending {
     }
 
     fn finish(self, app: &AppHandle, success: bool) {
-        for clear in [&SELF_REOPEN, &REOPEN_SEEN] {
-            clear.with(|slot| {
-                if slot.get() == Some(self.id) {
-                    slot.set(None);
-                }
-            });
-        }
+        self.panel.release();
         if !self.focus_only
             && success
             && self.auto_submit
@@ -327,17 +307,6 @@ impl Pending {
             if let Err(error) = restored {
                 warn!("[screen-sharing] could not restore clipboard: {error}");
             }
-        }
-        // If activation failed or the operation was cancelled during the brief
-        // Handy phase, return only while Handy is still frontmost. A user who
-        // switched elsewhere keeps their chosen app.
-        if matches!(
-            self.refresh.phase,
-            Phase::AwaitingHandy | Phase::AwaitingSession
-        ) && self.target.ensure_same_window().is_ok()
-            && self.focus() == Focus::Handy
-        {
-            let _ = super::activation::return_to_session(&self.target.running_app);
         }
     }
 }
@@ -445,27 +414,16 @@ fn start_inner(
         paste_error: None,
         cancellation,
         focus_only,
-        activation_status: None,
+        panel: super::focus_panel::FocusPanel::new()?,
     };
-    pending.target.ensure_focused()?;
+    PasteMode::Shared.ensure_current(&pending.target)?;
     PENDING.with(|slot| *slot.borrow_mut() = Some(pending));
-    SELF_REOPEN.with(|requested| requested.set(Some(id)));
-    match super::activation::request_self_activation() {
-        Ok(status) => PENDING.with(|slot| {
-            if let Some(pending) = slot.borrow_mut().as_mut() {
-                pending.activation_status = Some(status);
-            }
-        }),
-        Err(error) => {
-            PENDING.with(|slot| {
-                if let Some(pending) = slot.borrow_mut().take() {
-                    pending.finish(&app, false);
-                }
-            });
-            return Err(error);
+    PENDING.with(|slot| {
+        if let Some(pending) = slot.borrow().as_ref() {
+            pending.panel.request();
         }
-    }
-    info!("[screen-sharing] requested existing app through NSWorkspace; shared clipboard stays ON; focus-only check: {focus_only}");
+    });
+    info!("[screen-sharing] requested nonactivating key-window refresh; sharing stays ON; focus-only check: {focus_only}");
 
     let worker_app = app.clone();
     if let Err(error) = std::thread::Builder::new()
@@ -500,10 +458,7 @@ mod tests {
     use super::*;
 
     fn ready_refresh(start: Instant) -> Refresh {
-        let mut refresh = Refresh::new(start, 0, 0);
-        refresh.opened = true;
-        refresh.reopen_seen = true;
-        refresh
+        Refresh::new(start, 0, 0)
     }
 
     #[test]
@@ -512,10 +467,10 @@ mod tests {
         let mut refresh = ready_refresh(start);
         assert_eq!(refresh.advance(start, Focus::Session), Ok(Action::Wait));
         assert_eq!(
-            refresh.advance(start, Focus::Handy),
-            Ok(Action::ActivateSession)
+            refresh.advance(start, Focus::Panel),
+            Ok(Action::ReleasePanel)
         );
-        assert_eq!(refresh.advance(start, Focus::Handy), Ok(Action::Wait));
+        assert_eq!(refresh.advance(start, Focus::Panel), Ok(Action::Wait));
         let returned = start + Duration::from_millis(100);
         assert_eq!(refresh.advance(returned, Focus::Session), Ok(Action::Wait));
         assert_eq!(
@@ -538,7 +493,7 @@ mod tests {
         let mut refresh = ready_refresh(start);
         assert_eq!(refresh.advance(start, Focus::Session), Ok(Action::Wait));
         assert!(refresh
-            .advance(start + ACTIVATION_TIMEOUT, Focus::Session)
+            .advance(start + FOCUS_TIMEOUT, Focus::Session)
             .is_err());
     }
 
@@ -547,11 +502,11 @@ mod tests {
         let start = Instant::now();
         let mut refresh = ready_refresh(start);
         assert_eq!(
-            refresh.advance(start, Focus::Handy),
-            Ok(Action::ActivateSession)
+            refresh.advance(start, Focus::Panel),
+            Ok(Action::ReleasePanel)
         );
         assert!(refresh
-            .advance(start + ACTIVATION_TIMEOUT, Focus::Handy)
+            .advance(start + FOCUS_TIMEOUT, Focus::Panel)
             .is_err());
     }
 
@@ -559,7 +514,7 @@ mod tests {
     fn user_focus_changes_cancel_all_phases_before_paste() {
         let start = Instant::now();
         for phase in [
-            Phase::AwaitingHandy,
+            Phase::AwaitingPanel,
             Phase::AwaitingSession,
             Phase::Transferring,
         ] {
@@ -599,8 +554,8 @@ mod tests {
             let mut refresh = ready_refresh(start);
             assert_eq!(refresh.advance(start, Focus::Session), Ok(Action::Wait));
             assert_eq!(
-                refresh.advance(start, Focus::Handy),
-                Ok(Action::ActivateSession)
+                refresh.advance(start, Focus::Panel),
+                Ok(Action::ReleasePanel)
             );
             assert_eq!(refresh.advance(start, Focus::Session), Ok(Action::Wait));
             assert_eq!(
@@ -611,32 +566,12 @@ mod tests {
     }
 
     #[test]
-    fn activation_waits_for_both_same_process_completion_and_consumed_reopen() {
+    fn a_panel_that_regains_focus_during_transfer_cancels_without_pasting() {
         let start = Instant::now();
-        for (opened, reopen_seen) in [(false, false), (true, false), (false, true)] {
-            let mut refresh = Refresh::new(start, 0, 0);
-            refresh.opened = opened;
-            refresh.reopen_seen = reopen_seen;
-            assert_eq!(refresh.advance(start, Focus::Handy), Ok(Action::Wait));
-            assert_eq!(refresh.phase, Phase::AwaitingHandy);
-            assert!(refresh
-                .advance(start + ACTIVATION_TIMEOUT, Focus::Handy)
-                .is_err());
-        }
-        let mut refresh = ready_refresh(start);
-        assert_eq!(
-            refresh.advance(start, Focus::Handy),
-            Ok(Action::ActivateSession)
-        );
-    }
-
-    #[test]
-    fn only_one_requested_reopen_is_consumed_and_later_user_reopens_are_normal() {
-        assert!(!consume_activation_reopen());
-        SELF_REOPEN.with(|requested| requested.set(Some(123)));
-        assert!(consume_activation_reopen());
-        assert_eq!(REOPEN_SEEN.with(|seen| seen.get()), Some(123));
-        assert!(!consume_activation_reopen());
-        REOPEN_SEEN.with(|seen| seen.set(None));
+        let mut refresh = Refresh::new(start, 0, 0);
+        refresh.phase = Phase::Transferring;
+        assert!(refresh
+            .advance(start + Duration::from_secs(1), Focus::Panel)
+            .is_err());
     }
 }
