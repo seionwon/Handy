@@ -101,17 +101,19 @@ The process is entirely local:
 
 ### Install this fork on macOS
 
-Use a DMG built from **this repository**. See [the macOS build and packaging instructions](BUILD.md#macos-screen-sharing-distribution-universal) to produce a Universal installer for Apple Silicon and Intel Macs.
+Use a **PKG installer built from this repository** (0.9.14 and later). See [the macOS build and packaging instructions](BUILD.md#macos-screen-sharing-distribution-universal) for Apple Silicon and Intel builds.
 
-1. Fully quit any running Handy instance from its menu bar menu.
-2. Open the DMG and drag `Handy.app` into `Applications`. This replaces the existing Handy app and uses the same settings location.
-3. Eject the DMG and launch `/Applications/Handy.app`. This distribution uses a persistent local signing certificate by default and is not Developer ID signed or notarized; follow the included [Korean installation guide](packaging/macos/INSTALL-KO.txt) and [Apple's first-launch instructions](https://support.apple.com/102445) for a build you trust.
-4. Grant microphone and Accessibility permissions, download a speech model, and configure the recording shortcut.
+1. Open `Handy-ScreenSharing-<version>-arm64.pkg` or `-universal.pkg` and follow macOS Installer.
+2. Installer handles closing a running Handy **before replacing its files**. Continue through its close-app notice if shown. There is no Finder drag-and-replace step.
+3. After installation, launch `/Applications/Handy.app` yourself. Installation keeps existing settings, models, history and valid permission grants, and does not launch Handy automatically or add a login item.
+4. On a first install, grant microphone and Accessibility permissions, download a speech model, and configure the recording shortcut.
 5. Follow the [Screen Sharing setup above](#set-up-the-connection), including the ON-mode validation steps.
 
-The packaging script produces a **DMG installer**, a SHA-256 checksum, and an installation guide in `src-tauri/target/share/`. Share the DMG directly. The Universal build targets macOS 11.0 or later; this target does not imply verification on every OS version or Intel Mac. The packaged distribution disables the upstream updater so that an update does not replace the fork's changes; install future fork builds manually.
+The PKG supports **reinstalling the same version** and installs only `/Applications/Handy.app`. Its app-close requirement runs before replacement; the existing feature that replaces an older running instance when launching another build remains available. Finder's “Handy is in use” error occurs before that launch feature can run, which is why the old DMG workflow was insufficient.
 
-Build caches live in `src-tauri/target.noindex/`, with `target` retained as a compatibility symlink. Successful packaging removes generated app bundles and staging copies. Installed Handy ejects marked read-only Handy installer volumes, preventing their apps from remaining in search. Older installer volumes should be ejected manually. See [build search cleanup](BUILD.md#duplicate-handy-icons-in-macos-app-search).
+The packaging script produces a **PKG installer**, a SHA-256 checksum, and an installation guide in `src-tauri/target/share/`. Share the PKG directly. Its app uses the persistent local signing certificate; the PKG is unsigned by default and neither is Developer ID notarized. For a build you trust, follow the included [Korean installation guide](packaging/macos/INSTALL-KO.txt) and [Apple's first-launch instructions](https://support.apple.com/102445). The Universal build targets macOS 11.0 or later; this does not imply verification on every OS version or Intel Mac. The upstream updater remains disabled in this fork's packages.
+
+Build caches live in `src-tauri/target.noindex/`, with `target` retained as a compatibility symlink. Packaging verifies the app extracted from the finished PKG and removes generated app bundles and staging copies. A PKG does not mount another searchable Handy app. Installed Handy still ejects marked legacy Handy DMGs. See [build search cleanup](BUILD.md#duplicate-handy-icons-in-macos-app-search).
 
 The packager keeps the same signing certificate across builds. Valid existing approval is reused. Version 0.9.10 requests native macOS consent once when the running app is not authorized; it does not also open a second settings window or depend on an Add button in System Settings. An old code-hash approval cannot authorize a different app identity. See [permission and signing details](docs/macos-input-safety.md).
 

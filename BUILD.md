@@ -121,31 +121,41 @@ system-wide developer directory:
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bun scripts/build-macos-share.ts
 ```
 
-The release DMG, SHA-256 checksum and Korean installation guide are written to
-`src-tauri/target/share/`. The DMG contains `Handy.app`, an Applications shortcut,
-the guide and the MIT license; personal settings, recordings and downloaded
-speech models are not copied. Existing DMGs are not overwritten; move an old
-installer aside before rebuilding the same version.
-The packager creates a compressed APFS image, verifies its checksum, mounts it
-read-only, and verifies the code signature both on the mounted app and on a
-`ditto` copy. Do not substitute `hdiutil makehybrid -hfs`: it added FinderInfo
-attributes that invalidated the app signature on the mounted image.
-If this script already completed the app build and only the DMG packaging needs
-retrying, use `bun scripts/build-macos-share.ts --package-only`. This reuses the
-existing app and applies the distribution signature; do not use it to pick up
-source changes. After successful packaging the generated app bundle is removed,
-so `--package-only` is for retrying a failed packaging run, before that cleanup.
-For an Apple Silicon installer only, add `--arm64-only` when building or
-repackaging. Its filename ends in `-arm64.dmg`; the default remains Universal.
+The release **PKG**, SHA-256 checksum and Korean installation guide are written to
+`src-tauri/target/share/`. Since 0.9.14 the distribution uses macOS Installer rather
+than Finder's DMG drag-and-replace operation. Installer's native
+[`must-close`](https://developer.apple.com/library/archive/documentation/DeveloperTools/Reference/DistributionDefinitionRef/Chapters/Distribution_XML_Ref.html)
+requirement closes Handy before copying. This avoids Finder's “Handy is in use”
+error, which occurred before the app's launch-time instance replacement could run.
+The package fixes the destination to `/Applications/Handy.app`, uses atomic bundle
+replacement, requires a matching bundle identifier, and allows same-version
+reinstalls. It contains no privileged shell scripts or post-install launch action.
+Settings, recordings, model downloads and privacy grants are not part of its payload.
 
-On macOS, the build hooks move Cargo output to `src-tauri/target.noindex/` and
-leave a relative `target` symlink so existing commands keep working. Spotlight
-excludes paths containing `.noindex`; see [Apple's documentation](https://developer.apple.com/documentation/xcode/locating-a-missing-debug-symbol-file).
-DMG staging uses a `.noindex` folder, is removed after packaging (including on
-failure), and includes an indexing exclusion marker for the temporary volume.
-Successful packaging unregisters and removes the generated `.app` as well:
-Launch Services can retain registrations even when Spotlight excludes a path.
-Installed Handy also ejects marked read-only Handy installer volumes on startup.
+The packager expands the completed PKG, verifies the extracted app's signature,
+identity, version and architectures, and checks the final archive's app-close rule,
+install location and absence of scripts. Only then does it publish the installer
+and checksum. Existing packages are not overwritten. These checks parse the
+archive without running a privileged installation. On the build Mac, normal app
+termination and replacement using the verified extracted payload were checked
+separately; an attended Installer upgrade while Handy is running remains unverified.
+If a build completed but packaging failed, retry with
+`bun scripts/build-macos-share.ts --package-only`. This reuses and signs the existing
+app; it does not compile source changes. Successful packaging removes the generated
+app bundle, so this option is for retrying before that cleanup.
+For an Apple Silicon installer only, add `--arm64-only`; its filename ends in
+`-arm64.pkg`. The default remains Universal.
+
+On macOS, build hooks store Cargo output in `src-tauri/target.noindex/` and leave
+a relative `target` symlink. Packaging also removes its temporary app copies and
+unregisters its generated app. The PKG itself mounts no searchable app bundle.
+Installed Handy retains cleanup of marked legacy read-only Handy DMGs.
+
+The app is signed with the persistent local certificate by default. The PKG is
+unsigned unless `HANDY_MACOS_INSTALLER_IDENTITY` names an Installer signing
+certificate; `HANDY_MACOS_SIGNING_IDENTITY` separately controls app signing.
+Keep both identities stable. An app signing certificate is not interchangeable
+with an Installer signing certificate.
 
 This distribution targets macOS 11.0+, uses a persistent local signing certificate
 by default (not Apple Developer ID signing or notarization), and requires recipients to approve the app in
@@ -288,7 +298,7 @@ and stale-permission report.
 
 ### Duplicate Handy icons in macOS app search
 
-Use the installed `/Applications/Handy.app` and eject the DMG after installation.
+Use the installed `/Applications/Handy.app`. PKG installation mounts no second app; eject any legacy Handy DMGs still mounted.
 Build caches live in `target.noindex`. Successful packaging removes its generated
 app bundle and staging copies. On installed-app startup, only read-only DMGs with
 our installer marker and Handy bundle ID are eligible for automatic ejection;

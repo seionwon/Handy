@@ -8,9 +8,10 @@ import {
   mkdir,
   mkdtemp,
   rm,
-  rmdir,
-  symlink,
+  readdir,
+  writeFile,
 } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join, resolve } from "node:path";
 import { prepareMacosBuildOutput } from "./macos-build-layout";
 import { signWithLocalIdentity } from "./macos-local-signing";
@@ -45,7 +46,7 @@ if (signingIdentity) {
   shareConfig.bundle.macOS.signingIdentity = signingIdentity;
 }
 const output = join(root, "src-tauri/target/share");
-const filename = `Handy-ScreenSharing-${config.version}-${arm64Only ? "arm64" : "universal"}.dmg`;
+const filename = `Handy-ScreenSharing-${config.version}-${arm64Only ? "arm64" : "universal"}.pkg`;
 const destination = join(output, filename);
 
 // Keep clang, Swift, CMake and Rust on the same SDK, including on machines
@@ -124,8 +125,18 @@ await run([
   "-verify_arch",
   ...(arm64Only ? ["arm64"] : ["arm64", "x86_64"]),
 ]);
+// Include the current install guide even when --package-only reuses a build
+// made without tauri.macos-share.conf.json. Sign only after adding resources.
+await copyFile(
+  join(root, "packaging/macos/INSTALL-KO.txt"),
+  join(app, "Contents/Resources/INSTALL-KO.txt"),
+);
+await copyFile(
+  join(root, "LICENSE"),
+  join(app, "Contents/Resources/LICENSE.txt"),
+);
 if (!signingIdentity) await signWithLocalIdentity(root, app);
-else if (packageOnly) {
+else {
   await run([
     "/usr/bin/codesign",
     "--force",
@@ -156,105 +167,147 @@ await mkdir(output, { recursive: true });
 const stagingRoot = join(output, ".staging.noindex");
 await mkdir(stagingRoot, { recursive: true });
 const staging = await mkdtemp(join(stagingRoot, "Handy-"));
+const payloadApp = join(staging, "payload/Applications/Handy.app");
+const expanded = join(staging, "expanded");
+const expandedApp = join(expanded, "Handy.pkg/Payload/Applications/Handy.app");
 try {
-  // mkdtemp defaults to 0700; the image root must be readable by other users too.
   await chmod(staging, 0o755);
-  await run(["ditto", app, join(staging, "Handy.app")]);
+  await mkdir(join(staging, "payload/Applications"), { recursive: true });
+  await run(["ditto", app, payloadApp]);
+  await run(["codesign", "--verify", "--deep", "--strict", payloadApp]);
+  const resources = join(staging, "Resources");
+  await mkdir(resources);
+  await copyFile(join(root, "LICENSE"), join(resources, "LICENSE.txt"));
+  await copyFile(
+    join(root, "packaging/macos/INSTALL-KO.txt"),
+    join(resources, "INSTALL-KO.txt"),
+  );
+  const distribution = await Bun.file(
+    join(root, "packaging/macos/Distribution.xml"),
+  ).text();
+  if (!/^\d+\.\d+\.\d+$/.test(config.version)) {
+    throw new Error("The macOS installer requires a numeric release version.");
+  }
+  const distributionPath = join(staging, "Distribution.xml");
+  await Bun.write(
+    distributionPath,
+    distribution
+      .replaceAll("@VERSION@", config.version)
+      .replaceAll("@ARCHITECTURES@", arm64Only ? "arm64" : "arm64,x86_64"),
+  );
+  // Native Installer closes Handy before payload replacement. Keep the bundle
+  // fixed to /Applications, atomically replace it, and allow same-version
+  // reinstalls. No privileged shell scripts or post-install app launch.
   await run([
-    "codesign",
+    "/usr/bin/pkgbuild",
+    "--root",
+    join(staging, "payload"),
+    "--component-plist",
+    join(root, "packaging/macos/components.plist"),
+    "--identifier",
+    "com.pais.handy.pkg",
+    "--version",
+    config.version,
+    "--install-location",
+    "/",
+    "--ownership",
+    "recommended",
+    "--compression",
+    "legacy",
+    join(staging, "Handy.pkg"),
+  ]);
+  const archive = join(staging, filename);
+  const installerIdentity = process.env.HANDY_MACOS_INSTALLER_IDENTITY?.trim();
+  if (installerIdentity === "-") {
+    throw new Error("An installer signing identity must be a certificate.");
+  }
+  await run([
+    "/usr/bin/productbuild",
+    "--distribution",
+    distributionPath,
+    "--resources",
+    resources,
+    "--package-path",
+    staging,
+    ...(installerIdentity ? ["--sign", installerIdentity] : []),
+    archive,
+  ]);
+  await run(["/usr/sbin/pkgutil", "--expand-full", archive, expanded]);
+  await run([
+    "/usr/bin/codesign",
     "--verify",
     "--deep",
     "--strict",
-    join(staging, "Handy.app"),
+    expandedApp,
   ]);
-  await symlink("/Applications", join(staging, "Applications"));
-  await copyFile(join(root, "LICENSE"), join(staging, "LICENSE.txt"));
-  await copyFile(
-    join(root, "packaging/macos/INSTALL-KO.txt"),
-    join(staging, "INSTALL-KO.txt"),
-  );
-  // The installer volume is temporary; index the installed Applications copy.
-  await Bun.write(join(staging, ".metadata_never_index"), "");
-  await Bun.write(
-    join(staging, ".handy-installer.json"),
-    JSON.stringify({ identifier: "com.pais.handy", installer_format: 1 }),
-  );
+  const payload = join(expanded, "Handy.pkg/Payload");
+  if (
+    (await readdir(payload)).join() !== "Applications" ||
+    (await readdir(join(payload, "Applications"))).join() !== "Handy.app"
+  ) {
+    throw new Error(
+      "The installer payload must contain only /Applications/Handy.app.",
+    );
+  }
   await run([
-    "hdiutil",
-    "create",
-    "-srcfolder",
-    staging,
-    "-volname",
-    "Handy Screen Sharing",
-    "-fs",
-    "APFS",
-    "-format",
-    "UDZO",
-    "-o",
-    destination,
+    "bun",
+    join(root, "scripts/verify-macos-package.ts"),
+    expanded,
+    config.version,
+    arm64Only ? "arm64" : "arm64,x86_64",
   ]);
-  await run(["hdiutil", "verify", destination]);
-
-  // Verify the actual mounted filesystem and the copied app, not just the
-  // staging signature or image checksum. HFS makehybrid added FinderInfo to
-  // every path, which invalidated an otherwise correctly signed app.
-  const verificationMount = await mkdtemp(join(stagingRoot, "verify-volume-"));
-  const verificationCopy = await mkdtemp(join(stagingRoot, "verify-copy-"));
-  let attached = false;
-  try {
-    await run([
-      "hdiutil",
-      "attach",
-      "-readonly",
-      "-nobrowse",
-      "-mountpoint",
-      verificationMount,
-      destination,
-    ]);
-    attached = true;
-    await run([
-      "codesign",
-      "--verify",
-      "--deep",
-      "--strict",
-      join(verificationMount, "Handy.app"),
-    ]);
-    await run([
-      "ditto",
-      join(verificationMount, "Handy.app"),
-      join(verificationCopy, "Handy.app"),
-    ]);
-    await run([
-      "codesign",
-      "--verify",
-      "--deep",
-      "--strict",
-      join(verificationCopy, "Handy.app"),
-    ]);
-  } finally {
-    for (const directory of [verificationCopy, verificationMount]) {
-      Bun.spawnSync([
-        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-        "-u",
-        join(directory, "Handy.app"),
-      ]);
-    }
-    if (attached) await run(["hdiutil", "detach", verificationMount]);
-    await rm(verificationCopy, { recursive: true, force: true });
-    // Never recursively delete a mount point if image detachment failed.
-    await rmdir(verificationMount);
+  // Have Installer parse the finished product without installing or quitting
+  // anything. This also catches unsupported distribution metadata.
+  const choices = Bun.spawnSync([
+    "/usr/sbin/installer",
+    "-pkg",
+    archive,
+    "-target",
+    "/",
+    "-showChoicesXML",
+  ]);
+  if (choices.exitCode !== 0) {
+    throw new Error(
+      `Installer could not read the archive: ${choices.stderr.toString().trim()}`,
+    );
+  }
+  const extractedRequirement = Bun.spawnSync([
+    "/usr/bin/codesign",
+    "-d",
+    "-r-",
+    expandedApp,
+  ]);
+  const designatedRequirement = (output: string) =>
+    output
+      .split("\n")
+      .find((line) => line.includes("designated =>"))
+      ?.replace(/^#\s*/, "")
+      .trim();
+  if (
+    extractedRequirement.exitCode !== 0 ||
+    designatedRequirement(
+      extractedRequirement.stdout.toString() +
+        extractedRequirement.stderr.toString(),
+    ) !== designatedRequirement(requirementText)
+  ) {
+    throw new Error(
+      "The archived app's privacy identity changed during packaging.",
+    );
   }
 
   const digest = new Bun.CryptoHasher("sha256")
-    .update(await Bun.file(destination).arrayBuffer())
+    .update(await Bun.file(archive).arrayBuffer())
     .digest("hex");
-  await Bun.write(`${destination}.sha256`, `${digest}  ${filename}\n`);
+  // Publish only a verified package; never overwrite a previous release.
+  await copyFile(archive, destination, constants.COPYFILE_EXCL);
+  await writeFile(`${destination}.sha256`, `${digest}  ${filename}\n`, {
+    flag: "wx",
+  });
   await copyFile(
     join(root, "packaging/macos/INSTALL-KO.txt"),
     join(output, "INSTALL-KO.txt"),
   );
-  // Keep the verified installer as the distributable artifact. A second app
-  // bundle in Cargo output can be registered in app search even in .noindex.
+  // The PKG has no mounted app to appear in search. Remove build/staging copies.
   const unregister = Bun.spawnSync([
     "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
     "-u",
@@ -267,10 +320,12 @@ try {
   await rm(app, { recursive: true });
   console.log(`\nShare this installer: ${destination}\nSHA-256: ${digest}`);
 } finally {
-  Bun.spawnSync([
-    "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-    "-u",
-    join(staging, "Handy.app"),
-  ]);
+  for (const temporaryApp of [payloadApp, expandedApp]) {
+    Bun.spawnSync([
+      "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+      "-u",
+      temporaryApp,
+    ]);
+  }
   await rm(staging, { recursive: true, force: true });
 }

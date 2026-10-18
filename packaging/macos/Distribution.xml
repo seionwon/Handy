@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Handy</title>
+    <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="@ARCHITECTURES@"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="11.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <readme file="INSTALL-KO.txt" uti="public.plain-text"/>
+    <license file="LICENSE.txt" uti="public.plain-text"/>
+    <choices-outline>
+        <line choice="handy"/>
+    </choices-outline>
+    <choice id="handy" title="Handy" description="Handy" visible="false">
+        <pkg-ref id="com.pais.handy.pkg"/>
+    </choice>
+    <pkg-ref id="com.pais.handy.pkg" version="@VERSION@" onConclusion="None">Handy.pkg</pkg-ref>
+    <pkg-ref id="com.pais.handy.pkg">
+        <must-close>
+            <app id="com.pais.handy"/>
+        </must-close>
+    </pkg-ref>
+</installer-gui-script>
