@@ -19,6 +19,7 @@ const root = resolve(import.meta.dir, "..");
 await prepareMacosBuildOutput(root);
 const temporary = await mkdtemp(join(tmpdir(), "handy-signing-test.noindex-"));
 const directory = join(temporary, "identity");
+const originalSdkRoot = process.env.SDKROOT;
 const searchList = () =>
   Bun.spawnSync([
     "/usr/bin/security",
@@ -28,6 +29,8 @@ const searchList = () =>
   ]).stdout.toString();
 const originalSearchList = searchList();
 try {
+  // An inherited SDK from another toolchain must not override the selected SDK.
+  process.env.SDKROOT = join(temporary, "stale-macos.sdk");
   const requirements: string[] = [];
   for (const version of [1, 2, 3]) {
     const app = join(temporary, `version${version}`, "Handy.app");
@@ -42,6 +45,8 @@ try {
     );
     const compile = Bun.spawnSync([
       "/usr/bin/xcrun",
+      "--sdk",
+      "macosx",
       "clang",
       join(temporary, "fixture.c"),
       "-o",
@@ -104,8 +109,10 @@ try {
     "user keychain search list must remain unchanged",
   );
   console.log(
-    "Signing integration passed: update identity, signer rejection, private file modes, partial identity preservation, unchanged keychain search list.",
+    "Signing integration passed: explicit macOS SDK, update identity, signer rejection, private file modes, partial identity preservation, unchanged keychain search list.",
   );
 } finally {
+  if (originalSdkRoot === undefined) delete process.env.SDKROOT;
+  else process.env.SDKROOT = originalSdkRoot;
   await rm(temporary, { recursive: true, force: true });
 }

@@ -66,8 +66,11 @@ export async function signWithLocalIdentity(
   let fresh = false;
   let stage: string | undefined;
   try {
+    // Match the selected developer tools instead of clang's default CLT SDK.
     await run([
       "/usr/bin/xcrun",
+      "--sdk",
+      "macosx",
       "clang",
       "-Werror",
       "-Wno-deprecated-declarations",

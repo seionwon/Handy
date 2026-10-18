@@ -121,6 +121,10 @@ system-wide developer directory:
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bun scripts/build-macos-share.ts
 ```
 
+The packager and signing helper explicitly select the macOS SDK from these
+developer tools, so a different Command Line Tools SDK does not get mixed in.
+There is no need to change the system-wide `xcode-select` setting or set `SDKROOT`.
+
 The release **PKG**, SHA-256 checksum and Korean installation guide are written to
 `src-tauri/target/share/`. Since 0.9.14 the distribution uses macOS Installer rather
 than Finder's DMG drag-and-replace operation. Installer's native
