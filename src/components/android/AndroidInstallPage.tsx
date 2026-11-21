@@ -42,7 +42,7 @@ interface AndroidApkMeta {
 }
 
 const FALLBACK_VERSION = "0.10.1";
-const FALLBACK_FILE_NAME = `Handy-v${FALLBACK_VERSION}-android.apk`;
+const FALLBACK_FILE_NAME = `Handy-v${FALLBACK_VERSION}.apk`;
 const FALLBACK_RELATIVE_APK = `downloads/${FALLBACK_FILE_NAME}`;
 const RELATIVE_META_PATH = "downloads/android-apk-meta.json";
 
@@ -129,8 +129,7 @@ const COPY = {
     metaPackage: "패키지 ID",
     metaSha256: "SHA-256",
     adbHeading: "USB(ADB)로 바로 설치하기",
-    adbCommand: (gradleFile: string) =>
-      `adb install -r android/app/build/outputs/apk/debug/${gradleFile}`,
+    adbCommand: (apkFile: string) => `adb install -r ${apkFile}`,
     desktopFootnote:
       "데스크톱 앱(macOS/Windows/Linux)은 Tauri로 실행되며, 일반 브라우저로 열었을 때만 이 Android 설치 허브가 표시됩니다.",
     langSwitch: "English",
@@ -220,8 +219,7 @@ const COPY = {
     metaPackage: "Package ID",
     metaSha256: "SHA-256",
     adbHeading: "Install via USB (ADB)",
-    adbCommand: (gradleFile: string) =>
-      `adb install -r android/app/build/outputs/apk/debug/${gradleFile}`,
+    adbCommand: (apkFile: string) => `adb install -r ${apkFile}`,
     desktopFootnote:
       "The desktop app runs inside Tauri. Opening this server in a regular browser shows the Handy Android installer.",
     langSwitch: "한국어",
@@ -403,9 +401,7 @@ export const AndroidInstallPage: React.FC = () => {
   const androidCompatText = copy.minSdkLabel(meta?.minSdk ?? 26);
   const shortShaText = meta ? `${meta.sha256.slice(0, 16)}…` : "—";
   const packageIdText = meta?.packageId ?? "com.pais.handy";
-  const gradleOutputFile =
-    meta?.gradleOutputFile ?? `Handy-v${version}-debug.apk`;
-  const adbCmdText = copy.adbCommand(gradleOutputFile);
+  const adbCmdText = copy.adbCommand(apkFileName);
   const buttonType = "button";
   const urlInputType = "url";
   const mainRole = "main";

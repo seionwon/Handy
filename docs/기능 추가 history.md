@@ -142,3 +142,44 @@ CodeMemo 실행 버튼을 눌렀을 때 버전 번호가 붙은 Android APK 다�
 #### 실제 반영 상태 및 한계
 
 - 로컬 `main` 브랜치에 반영 및 빌드·검증을 완료했으며, 실제 Android 기기에서의 브라우저 다운로드 및 설치 확인은 실기기 연결 후 직접 진행이 필요합니다.
+
+<a id="hist-20261121-004"></a>
+
+### 2026-11-21 15:49:49 +09:00 — FocusTempo 방식과 동일한 프로젝트 루트·Gradle 디버그 APK(`Handy-v0.10.1.apk`) 배치 및 실행 탭 연동
+
+| 항목      | 내용                                                                              |
+| --------- | --------------------------------------------------------------------------------- |
+| ID        | `hist-20261121-004`                                                               |
+| 변경 종류 | Android APK 파일명·출력 경로 통일 (`FocusTempo` 패턴 적용)                        |
+| 상태      | Gradle 빌드·서명 검증·HTTP 헤더 및 브라우저 렌더링 검증 완료 (실기기 설치는 별도) |
+
+#### 목적
+
+`FocusTempo` 프로젝트가 CodeMemo 실행 탭에 APK 링크를 제공하는 방식(`FocusTempo/FocusTempo.apk` 및 `FocusTempo/app/build/outputs/apk/debug/FocusTempo.apk`, `androidComponents`로 디버그 출력 파일명 지정)을 Handy에도 그대로 적용하되 버전 번호를 붙여 `Handy-v0.10.1.apk`로 통일합니다.
+
+#### 열어보는 위치 및 사용 방법
+
+- **CodeMemo 실행 탭 APK 링크**:
+  - 프로젝트 루트: `Handy-v0.10.1.apk`
+  - Gradle 디버그 출력: `android/app/build/outputs/apk/debug/Handy-v0.10.1.apk` (`output-metadata.json` 동일 반영)
+- **웹 실행 서버 (`bun run dev` / `bun run preview`)**:
+  - 시작 로그 및 설치 허브(`AndroidInstallPage`)에서 `/downloads/Handy-v0.10.1.apk`와 `/Handy-v0.10.1.apk` 모두 동일 파일로 다운로드할 수 있습니다.
+- **빌드·동기화 명령**: `./android/gradlew assembleDebug` 실행 시 `syncRootDebugApk` 태스크가 자동으로 프로젝트 루트의 `Handy-v0.10.1.apk`를 최신화하고 이전 버전 APK를 정리합니다. `bun run build:android`도 `apksigner` 검증 후 동일 경로를 갱신합니다.
+
+#### 주요 동작 및 오류 처리
+
+- **FocusTempo 동일 `androidComponents` 구성**: `android/app/build.gradle.kts`에서 `base.archivesName` 대신 `androidComponents { onVariants(selector().withBuildType("debug")) { ... output.outputFileName.set("Handy-v$handyVersionName.apk") } }`를 사용해 `-debug` 접미사 없이 `Handy-v0.10.1.apk`를 직접 생성합니다.
+- **중복 산출물 제거**: 이전 `android/downloads/`, `dist/downloads/`, `public/downloads/` 중복 복사본을 제거해 프로젝트 내 APK를 루트(`Handy-v0.10.1.apk`)와 Gradle 출력(`android/app/build/outputs/apk/debug/Handy-v0.10.1.apk`) 두 곳으로만 깔끔하게 유지합니다.
+- **Git 저장소 보호**: 루트 `Handy-v*.apk`는 `.gitignore`로 제외해 25MB 바이너리가 GitHub 포크 저장소에 쌓이지 않도록 하면서도 디스크에 상시 존재해 CodeMemo 실행 탭이 바로 노출할 수 있도록 했습니다.
+
+#### 검증 결과
+
+- `./android/gradlew testDebugUnitTest assembleDebug`: 경고 0건으로 빌드·단위 테스트 통과 및 `syncRootDebugApk` 자동 실행 확인
+- `find . -name '*.apk'`: 프로젝트 루트 `Handy-v0.10.1.apk` 및 `android/app/build/outputs/apk/debug/Handy-v0.10.1.apk` 2개만 존재 확인 (`output-metadata.json`의 `outputFile: "Handy-v0.10.1.apk"`)
+- `bun run build:android --publish-only`: `apksigner verify --verbose` 통과(24.48 MB, APK Signature Scheme v2)
+- `bun run lint`, `bun run build`, `bun run test:qr`, `bun run check:translations`, `bun run test:permissions`, `bun run test:keyboard`: 전체 통과
+- `bun run dev` HTTP 헤더 및 `codememo-browser` 확인: `/downloads/Handy-v0.10.1.apk` 및 `/Handy-v0.10.1.apk` 모두 `200 OK` + `Content-Disposition: attachment; filename="Handy-v0.10.1.apk"`, `/downloads/Handy-Android.apk` `302 Found` 리디렉션, 데스크톱(한국어)·모바일 뷰포트 오류 0건 확인
+
+#### 실제 반영 상태 및 한계
+
+- 로컬 `main` 브랜치에 반영 및 APK 생성·검증을 완료했으며, 실제 Android 기기에서의 설치 및 동작 확인은 실기기에서 직접 진행이 필요합니다.

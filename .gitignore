@@ -47,6 +47,8 @@ result
 __pycache__/
 
 # Built Android APK artifacts served locally for phone install
+/Handy-v*.apk
+/Handy.apk
 public/downloads/
 android/downloads/
 .codememo-build/

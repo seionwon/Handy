@@ -20,9 +20,7 @@ val handyVersionCode: Int =
         }
         ?: 1001
 
-base {
-    archivesName.set("Handy-v$handyVersionName")
-}
+val handyApkFileName = "Handy-v$handyVersionName.apk"
 
 android {
     namespace = "com.pais.handy"
@@ -90,6 +88,38 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+}
+
+// FocusTempo와 동일하게 Android Studio/CodeMemo가 보여 주는 기본 디버그 산출물도 버전 포함 앱 이름으로 생성한다.
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set(handyApkFileName)
+        }
+    }
+}
+
+// FocusTempo처럼 프로젝트 루트에도 동일한 이름의 APK를 자동 복사해 실행 탭에서 바로 노출되게 한다.
+val syncRootDebugApk = tasks.register("syncRootDebugApk") {
+    val debugApkDir = layout.buildDirectory.dir("outputs/apk/debug")
+    val repoRoot = rootProject.projectDir.parentFile
+    val apkName = handyApkFileName
+    doLast {
+        val srcApk = debugApkDir.get().file(apkName).asFile
+        if (srcApk.isFile && repoRoot != null && repoRoot.isDirectory) {
+            repoRoot.listFiles { file ->
+                file.isFile &&
+                    file.name.startsWith("Handy-") &&
+                    file.name.endsWith(".apk") &&
+                    file.name != apkName
+            }?.forEach { it.delete() }
+            srcApk.copyTo(File(repoRoot, apkName), overwrite = true)
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    finalizedBy(syncRootDebugApk)
 }
 
 dependencies {

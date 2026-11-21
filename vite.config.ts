@@ -27,13 +27,11 @@ interface ResolvedApkInfo {
   downloadPath: string;
 }
 
-// Serve the latest built Android APK with versioned filename and installable
-// MIME headers in both dev and preview modes so CodeMemo's Run button always
-// exposes a versioned download link.
+// Serve the latest built Android APK with versioned filename (Handy-vX.Y.Z.apk,
+// matching FocusTempo's root + Gradle debug layout) and installable MIME headers
+// in both dev and preview modes.
 const androidApkHeadersPlugin = (): Plugin => {
   const debugApkDir = resolve(__dirname, "android/app/build/outputs/apk/debug");
-  const publishedDownloadsDir = resolve(__dirname, "android/downloads");
-  const distDownloadsDir = resolve(__dirname, "dist/downloads");
   const pkgPath = resolve(__dirname, "package.json");
   let cachedMeta: { key: string; json: string } | null = null;
 
@@ -46,7 +44,7 @@ const androidApkHeadersPlugin = (): Plugin => {
 
   const resolveLatestApk = (): ResolvedApkInfo | null => {
     const version = readPackageVersion();
-    const fileName = `Handy-v${version}-android.apk`;
+    const fileName = `Handy-v${version}.apk`;
     const downloadPath = `/downloads/${fileName}`;
     const candidates: Array<{
       path: string;
@@ -90,15 +88,13 @@ const androidApkHeadersPlugin = (): Plugin => {
       }
     }
 
-    for (const dir of [publishedDownloadsDir, distDownloadsDir]) {
-      const versioned = join(dir, fileName);
-      if (existsSync(versioned)) {
-        candidates.push({
-          path: versioned,
-          gradleOutputFile: `Handy-v${version}-debug.apk`,
-          versionCode: 1001,
-        });
-      }
+    const rootApk = resolve(__dirname, fileName);
+    if (existsSync(rootApk)) {
+      candidates.push({
+        path: rootApk,
+        gradleOutputFile: fileName,
+        versionCode: 1001,
+      });
     }
 
     if (candidates.length === 0) return null;
@@ -219,7 +215,10 @@ const androidApkHeadersPlugin = (): Plugin => {
     const info = resolveLatestApk();
     if (
       info &&
-      (pathname === info.downloadPath || pathname.endsWith(info.downloadPath))
+      (pathname === info.downloadPath ||
+        pathname.endsWith(info.downloadPath) ||
+        pathname === `/${info.fileName}` ||
+        pathname.endsWith(`/${info.fileName}`))
     ) {
       streamApk(req, res, info);
       return;

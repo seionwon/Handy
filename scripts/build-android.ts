@@ -4,12 +4,10 @@ import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
@@ -65,7 +63,8 @@ function resolveBuiltApk(): { apkPath: string; versionCode: number } {
 }
 
 const { apkPath, versionCode } = resolveBuiltApk();
-const gradleOutputFile = basename(apkPath);
+const fileName = `Handy-v${pkg.version}.apk`;
+const rootApkPath = join(root, fileName);
 
 // Verify APK signature with apksigner when Android build-tools are present.
 const sdkRoot =
@@ -89,57 +88,37 @@ if (existsSync(buildToolsDir)) {
   }
 }
 
-const bytes = readFileSync(apkPath);
-const sha256 = createHash("sha256").update(bytes).digest("hex");
-const sizeBytes = statSync(apkPath).size;
-const fileName = `Handy-v${pkg.version}-android.apk`;
-
-const meta = {
-  version: pkg.version,
-  versionCode,
-  packageId: "com.pais.handy",
-  fileName,
-  downloadUrl: `/downloads/${fileName}`,
-  relativeDownloadUrl: `downloads/${fileName}`,
-  latestAliasUrl: "/downloads/Handy-Android.apk",
-  gradleOutputFile,
-  sizeBytes,
-  sha256,
-  minSdk: 26,
-  targetSdk: 36,
-  abis: ["arm64-v8a", "x86_64"],
-  builtAt: new Date().toISOString(),
-};
-
-// Keep published APKs outside `public/` so `tauri build` never bundles a 25MB
-// Android APK into the macOS/Windows/Linux desktop app.
-const legacyPublicDownloads = join(root, "public", "downloads");
-if (existsSync(legacyPublicDownloads)) {
-  rmSync(legacyPublicDownloads, { recursive: true, force: true });
-}
-
-const publishDirs = [join(androidDir, "downloads")];
-if (existsSync(join(root, "dist"))) {
-  publishDirs.push(join(root, "dist", "downloads"));
-}
-
-for (const dir of publishDirs) {
-  mkdirSync(dir, { recursive: true });
-  for (const existing of readdirSync(dir)) {
-    if (existing.endsWith(".apk") && existing !== fileName) {
-      rmSync(join(dir, existing), { force: true });
-    }
+// Match FocusTempo's exact layout: keep only the root APK and the Gradle debug
+// output APK so CodeMemo's Run tab surfaces clean, non-duplicated versioned links.
+for (const legacyDir of [
+  join(root, "public", "downloads"),
+  join(androidDir, "downloads"),
+  join(root, "dist", "downloads"),
+]) {
+  if (existsSync(legacyDir)) {
+    rmSync(legacyDir, { recursive: true, force: true });
   }
-  copyFileSync(apkPath, join(dir, fileName));
-  writeFileSync(
-    join(dir, "android-apk-meta.json"),
-    JSON.stringify(meta, null, 2) + "\n",
-    "utf8",
-  );
 }
+
+for (const existing of readdirSync(root)) {
+  if (
+    existing.startsWith("Handy-") &&
+    existing.endsWith(".apk") &&
+    existing !== fileName
+  ) {
+    rmSync(join(root, existing), { force: true });
+  }
+}
+
+copyFileSync(apkPath, rootApkPath);
+
+const bytes = readFileSync(rootApkPath);
+const sha256 = createHash("sha256").update(bytes).digest("hex");
+const sizeBytes = statSync(rootApkPath).size;
 
 console.log(
-  `Published ${fileName} (v${pkg.version}, ${(sizeBytes / 1048576).toFixed(2)} MB, sha256=${sha256.slice(0, 12)}…)`,
+  `Published ${fileName} (v${pkg.version}, versionCode=${versionCode}, ${(sizeBytes / 1048576).toFixed(2)} MB, sha256=${sha256.slice(0, 12)}…)`,
 );
-console.log(`  Gradle output: ${apkPath}`);
+console.log(`  Project root : ${rootApkPath}`);
+console.log(`  Gradle output: ${apkPath} (${basename(apkPath)})`);
 console.log(`  Download URL : /downloads/${fileName}`);
