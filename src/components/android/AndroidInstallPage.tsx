@@ -4,8 +4,10 @@ import {
   Copy,
   Cpu,
   Download,
+  ExternalLink,
   FileAudio,
   Keyboard,
+  Link2,
   Mic,
   Moon,
   ShieldCheck,
@@ -24,9 +26,13 @@ type QrTarget = "apk" | "page";
 
 interface AndroidApkMeta {
   version: string;
+  versionCode?: number;
   packageId: string;
   fileName: string;
   downloadUrl: string;
+  relativeDownloadUrl?: string;
+  latestAliasUrl?: string;
+  gradleOutputFile?: string;
   sizeBytes: number;
   sha256: string;
   minSdk: number;
@@ -35,12 +41,15 @@ interface AndroidApkMeta {
   builtAt: string;
 }
 
-const DEFAULT_APK_URL = "/downloads/Handy-Android.apk";
-const META_URL = "/downloads/android-apk-meta.json";
+const FALLBACK_VERSION = "0.10.1";
+const FALLBACK_FILE_NAME = `Handy-v${FALLBACK_VERSION}-android.apk`;
+const FALLBACK_RELATIVE_APK = `downloads/${FALLBACK_FILE_NAME}`;
+const RELATIVE_META_PATH = "downloads/android-apk-meta.json";
 
 const COPY = {
   ko: {
-    pageTitle: "Handy for Android — 설치 및 음성 키보드 안내",
+    pageTitle: (v: string) =>
+      `Handy v${v} for Android — APK 다운로드 및 설치 안내`,
     badge: "Android 네이티브 앱",
     heroTitle: "안드로이드에서도 완전 오프라인 음성 받아쓰기",
     heroSubtitle:
@@ -48,8 +57,15 @@ const COPY = {
     statusReady: "APK 설치 파일 준비 완료",
     statusMissing: "APK가 아직 게시되지 않았습니다",
     statusChecking: "APK 상태를 확인하는 중…",
-    downloadBtn: "Android APK 다운로드 및 설치",
-    rebuildHint: "터미널에서 bun run build:android 를 실행하면 APK가 자동 생성됩니다.",
+    downloadBtn: (v: string, size: string) =>
+      size !== "—"
+        ? `Handy v${v} APK 다운로드 (${size})`
+        : `Handy v${v} APK 다운로드`,
+    directLinkLabel: "APK 직접 다운로드 링크",
+    directLinkHint:
+      "휴대폰에서 위 링크를 누르거나 QR 코드를 스캔하면 버전이 포함된 APK 파일을 바로 내려받을 수 있습니다.",
+    rebuildHint:
+      "터미널에서 bun run build:android 를 실행하면 버전이 포함된 APK가 자동 생성됩니다.",
     copyLink: "링크 복사",
     copied: "복사됨",
     qrTitle: "휴대폰 카메라로 스캔해 설치",
@@ -63,11 +79,12 @@ const COPY = {
     customOriginLabel: "휴대폰 접속용 주소 (선택)",
     resetOrigin: "기본값",
     stepsHeading: "휴대폰 설치 및 음성 키보드 켜기",
-    stepsSub: "처음 한 번만 설정하면 카카오톡·메모·브라우저 등 모든 앱에서 바로 받아쓸 수 있습니다.",
+    stepsSub:
+      "처음 한 번만 설정하면 카카오톡·메모·브라우저 등 모든 앱에서 바로 받아쓸 수 있습니다.",
     steps: [
       {
         title: "1. APK 다운로드 및 설치",
-        body: "휴대폰 브라우저에서 위 버튼을 눌러 APK를 내려받은 뒤 실행하세요. 보안 안내가 뜨면 '이 출처의 앱 허용(알 수 없는 앱 설치)'을 켜고 설치합니다.",
+        body: "휴대폰 브라우저에서 위 링크를 눌러 버전이 표시된 APK를 내려받은 뒤 실행하세요. 보안 안내가 뜨면 '이 출처의 앱 허용(알 수 없는 앱 설치)'을 켜고 설치합니다.",
       },
       {
         title: "2. 마이크 권한 및 음성 엔진 준비",
@@ -112,7 +129,8 @@ const COPY = {
     metaPackage: "패키지 ID",
     metaSha256: "SHA-256",
     adbHeading: "USB(ADB)로 바로 설치하기",
-    adbCommand: "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
+    adbCommand: (gradleFile: string) =>
+      `adb install -r android/app/build/outputs/apk/debug/${gradleFile}`,
     desktopFootnote:
       "데스크톱 앱(macOS/Windows/Linux)은 Tauri로 실행되며, 일반 브라우저로 열었을 때만 이 Android 설치 허브가 표시됩니다.",
     langSwitch: "English",
@@ -121,7 +139,8 @@ const COPY = {
     minSdkLabel: (sdk: number) => `Android 8.0+ (API ${sdk}–36)`,
   },
   en: {
-    pageTitle: "Handy for Android — Install & Voice Keyboard Guide",
+    pageTitle: (v: string) =>
+      `Handy v${v} for Android — APK Download & Install Guide`,
     badge: "Native Android App",
     heroTitle: "Offline speech-to-text on your Android phone",
     heroSubtitle:
@@ -129,8 +148,15 @@ const COPY = {
     statusReady: "APK ready to install",
     statusMissing: "APK has not been published yet",
     statusChecking: "Checking APK availability…",
-    downloadBtn: "Download & Install Android APK",
-    rebuildHint: "Run bun run build:android in the workspace to compile and publish the APK.",
+    downloadBtn: (v: string, size: string) =>
+      size !== "—"
+        ? `Download Handy v${v} APK (${size})`
+        : `Download Handy v${v} APK`,
+    directLinkLabel: "Direct APK Download Link",
+    directLinkHint:
+      "Tap the versioned APK link above on your phone or scan the QR code to download and install.",
+    rebuildHint:
+      "Run bun run build:android in the workspace to compile and publish the versioned APK.",
     copyLink: "Copy link",
     copied: "Copied",
     qrTitle: "Scan with your phone camera",
@@ -144,11 +170,12 @@ const COPY = {
     customOriginLabel: "Phone-reachable address (optional)",
     resetOrigin: "Reset",
     stepsHeading: "Install & Enable the Voice Keyboard",
-    stepsSub: "Once enabled, you can dictate into any Android app directly from the keyboard.",
+    stepsSub:
+      "Once enabled, you can dictate into any Android app directly from the keyboard.",
     steps: [
       {
         title: "1. Download and install the APK",
-        body: "Tap the download button above on your Android phone, open the APK, and allow 'Install unknown apps' for your browser when prompted.",
+        body: "Tap the versioned APK link above on your Android phone, open the downloaded file, and allow 'Install unknown apps' for your browser when prompted.",
       },
       {
         title: "2. Grant microphone access & pick an engine",
@@ -193,7 +220,8 @@ const COPY = {
     metaPackage: "Package ID",
     metaSha256: "SHA-256",
     adbHeading: "Install via USB (ADB)",
-    adbCommand: "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
+    adbCommand: (gradleFile: string) =>
+      `adb install -r android/app/build/outputs/apk/debug/${gradleFile}`,
     desktopFootnote:
       "The desktop app runs inside Tauri. Opening this server in a regular browser shows the Handy Android installer.",
     langSwitch: "한국어",
@@ -219,17 +247,33 @@ function isLoopbackHost(hostname: string): boolean {
   );
 }
 
-function normalizeOrigin(input: string, fallback: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return fallback;
+function getCurrentBaseUrl(): URL {
+  if (typeof window === "undefined") {
+    return new URL("http://127.0.0.1:1420/");
+  }
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  if (!url.pathname.endsWith("/")) {
+    url.pathname = url.pathname.replace(/\/[^/]*$/, "/");
+  }
+  return url;
+}
+
+function applyCustomOrigin(baseUrl: URL, customOrigin: string): URL {
+  const trimmed = customOrigin.trim();
+  if (!trimmed) return baseUrl;
   try {
     const withScheme = /^https?:\/\//i.test(trimmed)
       ? trimmed
       : `http://${trimmed}`;
     const parsed = new URL(withScheme);
-    return parsed.origin;
+    const merged = new URL(baseUrl.toString());
+    merged.protocol = parsed.protocol;
+    merged.host = parsed.host;
+    return merged;
   } catch {
-    return fallback;
+    return baseUrl;
   }
 }
 
@@ -257,10 +301,11 @@ export const AndroidInstallPage: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const copy = COPY[lang];
+  const version = meta?.version ?? FALLBACK_VERSION;
 
   useEffect(() => {
-    document.title = copy.pageTitle;
-  }, [copy.pageTitle]);
+    document.title = copy.pageTitle(version);
+  }, [copy, version]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -268,7 +313,9 @@ export const AndroidInstallPage: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${META_URL}?t=${Date.now()}`, { cache: "no-store" })
+    const metaUrl = new URL(RELATIVE_META_PATH, getCurrentBaseUrl());
+    metaUrl.searchParams.set("t", String(Date.now()));
+    fetch(metaUrl.toString(), { cache: "no-store" })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as AndroidApkMeta;
@@ -288,23 +335,31 @@ export const AndroidInstallPage: React.FC = () => {
     };
   }, []);
 
-  const currentOrigin =
-    typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:1420";
-  const currentHost =
-    typeof window !== "undefined" ? window.location.hostname : "127.0.0.1";
-  const onLoopback = isLoopbackHost(currentHost);
+  const currentBaseUrl = useMemo(() => getCurrentBaseUrl(), []);
+  const onLoopback = isLoopbackHost(currentBaseUrl.hostname);
 
-  const effectiveOrigin = useMemo(
-    () => normalizeOrigin(customOrigin, currentOrigin),
-    [customOrigin, currentOrigin],
+  const effectiveBaseUrl = useMemo(
+    () => applyCustomOrigin(currentBaseUrl, customOrigin),
+    [currentBaseUrl, customOrigin],
   );
 
-  const apkRelativeUrl = meta?.downloadUrl ?? DEFAULT_APK_URL;
-  const apkFileName = meta?.fileName ?? "Handy-Android.apk";
-  const qrUrl =
-    qrTarget === "apk"
-      ? `${effectiveOrigin}${apkRelativeUrl}`
-      : `${effectiveOrigin}/`;
+  const apkFileName = meta?.fileName ?? FALLBACK_FILE_NAME;
+  const relativeApkPath =
+    meta?.relativeDownloadUrl ??
+    (meta?.downloadUrl
+      ? meta.downloadUrl.replace(/^\/+/, "")
+      : FALLBACK_RELATIVE_APK);
+
+  const localApkHref = useMemo(
+    () => new URL(relativeApkPath, currentBaseUrl).toString(),
+    [relativeApkPath, currentBaseUrl],
+  );
+  const effectiveApkUrl = useMemo(
+    () => new URL(relativeApkPath, effectiveBaseUrl).toString(),
+    [relativeApkPath, effectiveBaseUrl],
+  );
+  const effectivePageUrl = effectiveBaseUrl.toString();
+  const qrUrl = qrTarget === "apk" ? effectiveApkUrl : effectivePageUrl;
 
   const copyText = async (key: string, text: string) => {
     try {
@@ -341,13 +396,17 @@ export const AndroidInstallPage: React.FC = () => {
       : metaStatus === "missing"
         ? copy.statusMissing
         : copy.statusChecking;
-  const versionText = meta ? `v${meta.version}` : "v0.10.1";
+  const versionText = `v${version}`;
   const sizeText = meta ? formatBytes(meta.sizeBytes) : "—";
+  const downloadBtnText = copy.downloadBtn(version, sizeText);
   const abisText = meta ? meta.abis.join(" · ") : "arm64-v8a · x86_64";
   const androidCompatText = copy.minSdkLabel(meta?.minSdk ?? 26);
   const shortShaText = meta ? `${meta.sha256.slice(0, 16)}…` : "—";
   const packageIdText = meta?.packageId ?? "com.pais.handy";
-  const stepButtonKindApk = "button";
+  const gradleOutputFile =
+    meta?.gradleOutputFile ?? `Handy-v${version}-debug.apk`;
+  const adbCmdText = copy.adbCommand(gradleOutputFile);
+  const buttonType = "button";
   const urlInputType = "url";
   const mainRole = "main";
 
@@ -371,14 +430,14 @@ export const AndroidInstallPage: React.FC = () => {
 
           <div className="flex items-center gap-2">
             <button
-              type={stepButtonKindApk}
+              type={buttonType}
               onClick={() => setLang(lang === "ko" ? "en" : "ko")}
               className="rounded-lg border border-line bg-wash px-3 py-1.5 text-xs font-medium text-text hover:border-line-strong transition-colors cursor-pointer"
             >
               {langButtonText}
             </button>
             <button
-              type={stepButtonKindApk}
+              type={buttonType}
               aria-label={themeButtonLabel}
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-wash px-3 py-1.5 text-xs font-medium text-text hover:border-line-strong transition-colors cursor-pointer"
@@ -396,8 +455,8 @@ export const AndroidInstallPage: React.FC = () => {
         <main role={mainRole} className="mt-7 space-y-8">
           {/* Hero section */}
           <section className="grid grid-cols-1 gap-6 lg:grid-cols-12 rounded-2xl border border-line bg-wash/40 p-5 sm:p-7">
-            <div className="lg:col-span-7 flex flex-col justify-center gap-6">
-              <div className="space-y-4">
+            <div className="lg:col-span-7 flex flex-col justify-center gap-5">
+              <div className="space-y-3.5">
                 <div className="inline-flex flex-wrap items-center gap-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
@@ -411,7 +470,7 @@ export const AndroidInstallPage: React.FC = () => {
                     <ShieldCheck className="h-3.5 w-3.5" />
                     {statusBadgeText}
                   </span>
-                  <span className="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-ink-2">
+                  <span className="rounded-full border border-line px-2.5 py-1 text-xs font-semibold text-text">
                     {versionText}
                   </span>
                   <span className="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-ink-2">
@@ -430,7 +489,7 @@ export const AndroidInstallPage: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-3">
                   <a
-                    href={apkRelativeUrl}
+                    href={localApkHref}
                     download={apkFileName}
                     className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition-opacity ${
                       metaStatus === "missing"
@@ -439,14 +498,12 @@ export const AndroidInstallPage: React.FC = () => {
                     }`}
                   >
                     <Download className="h-4 w-4" />
-                    <span>{copy.downloadBtn}</span>
+                    <span>{downloadBtnText}</span>
                   </a>
 
                   <button
-                    type={stepButtonKindApk}
-                    onClick={() =>
-                      copyText("apk-link", `${effectiveOrigin}${apkRelativeUrl}`)
-                    }
+                    type={buttonType}
+                    onClick={() => copyText("apk-link", effectiveApkUrl)}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-background px-4 py-3 text-sm font-medium text-text hover:border-line-strong transition-colors cursor-pointer"
                   >
                     {copiedKey === "apk-link" ? (
@@ -458,6 +515,38 @@ export const AndroidInstallPage: React.FC = () => {
                       {copiedKey === "apk-link" ? copy.copied : copy.copyLink}
                     </span>
                   </button>
+                </div>
+
+                {/* Prominent versioned direct APK link */}
+                <div className="rounded-xl border border-line bg-background p-3.5 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-text">
+                      <Link2 className="h-3.5 w-3.5 text-background-ui" />
+                      <span>{copy.directLinkLabel}</span>
+                    </span>
+                    <span className="rounded-md bg-background-ui/12 px-2 py-0.5 font-mono text-[11px] font-semibold text-background-ui">
+                      {apkFileName}
+                    </span>
+                  </div>
+
+                  <a
+                    href={localApkHref}
+                    download={apkFileName}
+                    className={`group flex items-start justify-between gap-2 rounded-lg border border-line bg-wash/60 px-3 py-2 font-mono text-xs text-background-ui hover:border-background-ui/50 transition-colors ${
+                      metaStatus === "missing"
+                        ? "pointer-events-none opacity-60"
+                        : ""
+                    }`}
+                  >
+                    <span className="break-all underline decoration-background-ui/40 group-hover:decoration-background-ui">
+                      {effectiveApkUrl}
+                    </span>
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0 mt-0.5 opacity-75 group-hover:opacity-100" />
+                  </a>
+
+                  <p className="text-[11px] text-ink-2 leading-relaxed break-keep">
+                    {copy.directLinkHint}
+                  </p>
                 </div>
 
                 {metaStatus === "missing" && (
@@ -506,7 +595,7 @@ export const AndroidInstallPage: React.FC = () => {
                 </span>
                 <div className="inline-flex rounded-lg border border-line bg-wash p-0.5 text-[11px]">
                   <button
-                    type={stepButtonKindApk}
+                    type={buttonType}
                     onClick={() => setQrTarget("apk")}
                     className={`whitespace-nowrap shrink-0 rounded-md px-2.5 py-1 font-medium transition-colors cursor-pointer ${
                       qrTarget === "apk"
@@ -517,7 +606,7 @@ export const AndroidInstallPage: React.FC = () => {
                     {copy.qrModeApk}
                   </button>
                   <button
-                    type={stepButtonKindApk}
+                    type={buttonType}
                     onClick={() => setQrTarget("page")}
                     className={`whitespace-nowrap shrink-0 rounded-md px-2.5 py-1 font-medium transition-colors cursor-pointer ${
                       qrTarget === "page"
@@ -530,17 +619,26 @@ export const AndroidInstallPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="py-1">
+              <div className="flex flex-col items-center gap-2 py-1">
                 <QrCode value={qrUrl} size={184} label={copy.qrAria} />
+                {qrTarget === "apk" && (
+                  <span className="rounded-full border border-line bg-wash px-2.5 py-0.5 font-mono text-[11px] font-medium text-ink-2">
+                    {apkFileName}
+                  </span>
+                )}
               </div>
 
               <div className="w-full space-y-2.5">
                 <div className="flex items-center gap-2 rounded-lg border border-line bg-wash/70 px-2.5 py-1.5">
-                  <code className="flex-1 truncate text-[11px] text-ink-2">
+                  <a
+                    href={qrTarget === "apk" ? localApkHref : effectivePageUrl}
+                    download={qrTarget === "apk" ? apkFileName : undefined}
+                    className="flex-1 truncate font-mono text-[11px] text-ink-2 hover:text-background-ui hover:underline"
+                  >
                     {qrUrl}
-                  </code>
+                  </a>
                   <button
-                    type={stepButtonKindApk}
+                    type={buttonType}
                     onClick={() => copyText("qr-url", qrUrl)}
                     className="shrink-0 text-xs font-medium text-background-ui hover:underline cursor-pointer"
                   >
@@ -553,7 +651,7 @@ export const AndroidInstallPage: React.FC = () => {
                     <p className="text-[11px] font-semibold text-warning">
                       {copy.localhostNoticeTitle}
                     </p>
-                    <p className="text-[11px] text-ink-2 leading-relaxed">
+                    <p className="text-[11px] text-ink-2 leading-relaxed break-keep">
                       {copy.localhostNoticeBody}
                     </p>
                     <div className="flex items-center gap-1.5">
@@ -567,7 +665,7 @@ export const AndroidInstallPage: React.FC = () => {
                       />
                       {customOrigin && (
                         <button
-                          type={stepButtonKindApk}
+                          type={buttonType}
                           onClick={() => setCustomOrigin("")}
                           className="rounded-lg border border-line bg-background px-2.5 py-1.5 text-xs text-ink-2 hover:text-text cursor-pointer"
                         >
@@ -643,11 +741,11 @@ export const AndroidInstallPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-2 rounded-xl border border-line bg-background px-3 py-2">
                 <code className="flex-1 overflow-x-auto text-xs text-ink-2 whitespace-nowrap">
-                  {copy.adbCommand}
+                  {adbCmdText}
                 </code>
                 <button
-                  type={stepButtonKindApk}
-                  onClick={() => copyText("adb", copy.adbCommand)}
+                  type={buttonType}
+                  onClick={() => copyText("adb", adbCmdText)}
                   className="shrink-0 text-xs font-medium text-background-ui hover:underline cursor-pointer"
                 >
                   {copiedKey === "adb" ? copy.copied : copy.copyLink}
@@ -668,7 +766,7 @@ export const AndroidInstallPage: React.FC = () => {
                 </code>
                 {meta && (
                   <button
-                    type={stepButtonKindApk}
+                    type={buttonType}
                     onClick={() => copyText("sha", meta.sha256)}
                     className="shrink-0 text-xs font-medium text-background-ui hover:underline cursor-pointer"
                   >

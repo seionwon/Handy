@@ -102,3 +102,43 @@ Handy 포크(`seionwon/Handy`)의 주요 기능 변경, 업스트림 동기화 �
 - **미수행 항목 / 한계**:
   - 실제 물리 Android 스마트폰에서의 APK 사이드로드 설치, 마이크 녹음, Whisper 모델 다운로드 및 `Handy 음성 키보드` 타 앱 입력 동작은 호스트에 연결된 Android 기기가 없어 에뮬레이터/실기기 테스트를 수행하지 못했습니다.
   - 플레이스토어 배포용 Release 키스토어 서명은 포함하지 않았으며 로컬/휴대폰 설치용 Debug 서명 APK로 구성되어 있습니다.
+
+<a id="hist-20261121-003"></a>
+
+### 2026-11-21 13:47:39 +09:00 — 실행 시 버전 포함 Android APK 다운로드 링크 자동 노출 및 산출물 버전화
+
+| 항목      | 내용                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------- |
+| ID        | `hist-20261121-003`                                                                      |
+| 변경 종류 | Android APK 파일명 버전화 · 실행 서버/설치 허브 직접 다운로드 링크 노출 개선             |
+| 상태      | Gradle 빌드·서명 검증·dev/preview 헤더 및 브라우저 렌더링 검증 완료 (실기기 설치는 별도) |
+
+#### 목적
+
+CodeMemo 실행 버튼을 눌렀을 때 버전 번호가 붙은 Android APK 다운로드 링크(`Handy-v0.10.1-android.apk`)가 서버 실행 로그와 브라우저 설치 허브 양쪽에서 즉시 노출되고, Gradle APK 산출물·HTTP `Content-Disposition` 파일명·QR 코드까지 모두 버전 번호를 일관되게 포함하도록 개선합니다.
+
+#### 열어보는 위치 및 사용 방법
+
+- **실행 서버 로그 (`bun run dev` / `bun run preview`)**: 서버 시작 직후 `Android APK (v0.10.1): http://<host>:<port>/downloads/Handy-v0.10.1-android.apk` 링크(0.0.0.0 바인딩 시 LAN IP 링크 포함)가 출력됩니다.
+- **브라우저 설치 허브 (`AndroidInstallPage`)**: 실행 화면 상단 히어로 영역에 `Handy v0.10.1 APK 다운로드 (24.5 MB)` 버튼과 별도의 클릭 가능한 **APK 직접 다운로드 링크** 카드(`Handy-v0.10.1-android.apk` 전체 URL 및 복사 버튼), 그리고 버전 파일명 배지가 붙은 QR 코드가 바로 표시됩니다.
+- **Gradle 및 게시 APK 파일**:
+  - Gradle 출력: `android/app/build/outputs/apk/debug/Handy-v0.10.1-debug.apk` (`output-metadata.json` 연동)
+  - 게시 출력: `android/downloads/Handy-v0.10.1-android.apk`, `dist/downloads/Handy-v0.10.1-android.apk`
+
+#### 주요 동작 및 오류 처리
+
+- **단일 버전 소스 동기화**: `android/app/build.gradle.kts`가 루트 `package.json`의 `version`(`0.10.1`)을 읽어 `versionName`/`versionCode`(`1001`) 및 `base.archivesName = "Handy-v0.10.1"`에 자동 반영합니다.
+- **버전 포함 URL 및 하위 호환 리디렉션**: `vite.config.ts`가 `/downloads/Handy-v0.10.1-android.apk`를 `application/vnd.android.package-archive` 및 `Content-Disposition: attachment; filename="Handy-v0.10.1-android.apk"`로 스트리밍하고, 기존 `/downloads/Handy-Android.apk` 요청은 `302 Found`로 버전 URL로 리디렉션합니다.
+- **서브패스 프록시 대응 및 데스크톱 번들 비대화 방지**: `AndroidInstallPage.tsx`는 현재 페이지 URL 기준 상대 경로(`downloads/...`)로 메타데이터와 APK 링크를 계산해 프록시 하위 경로에서도 깨지지 않도록 했으며, 게시 위치를 `public/downloads/`에서 `android/downloads/`(+ `dist/downloads/`)로 옮겨 `tauri build` 시 데스크톱 앱 번들에 25MB Android APK가 섞이지 않도록 분리했습니다.
+
+#### 검증 결과
+
+- `./android/gradlew testDebugUnitTest assembleDebug`: `android/app/build/outputs/apk/debug/Handy-v0.10.1-debug.apk` 생성 및 `output-metadata.json` (`outputFile: "Handy-v0.10.1-debug.apk"`) 확인, 단위 테스트 통과
+- `bun run build:android --publish-only`: `apksigner verify --verbose` 통과(24.48 MB), `android/downloads/Handy-v0.10.1-android.apk` 및 `dist/downloads/Handy-v0.10.1-android.apk` 게시 확인
+- `bun run lint`, `bun run build`, `bun run test:qr`, `bun run check:translations`, `bun run test:permissions`, `bun run test:keyboard`: 전체 통과
+- `bun run dev`(포트 `1420`) 및 `bun run preview`(포트 `4173`) 검증: 시작 로그에 버전 APK 링크 출력, `/downloads/Handy-v0.10.1-android.apk` `200 OK` + 버전 `Content-Disposition`, `/downloads/Handy-Android.apk` `302 Found` 리디렉션 확인
+- `codememo-browser` 시각 검증: `1280×800`(한국어) 및 `390×844`(모바일) 뷰포트에서 `Handy v0.10.1 APK 다운로드 (24.5 MB)` 버튼, 클릭 가능한 `Handy-v0.10.1-android.apk` 링크 카드, QR 코드 및 오류 0건 확인
+
+#### 실제 반영 상태 및 한계
+
+- 로컬 `main` 브랜치에 반영 및 빌드·검증을 완료했으며, 실제 Android 기기에서의 브라우저 다운로드 및 설치 확인은 실기기 연결 후 직접 진행이 필요합니다.

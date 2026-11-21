@@ -3,6 +3,27 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val handyVersionName: String =
+    rootProject.file("../package.json")
+        .takeIf { it.isFile }
+        ?.readText()
+        ?.let { Regex(""""version"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1) }
+        ?: "0.10.1"
+
+val handyVersionCode: Int =
+    Regex("""^(\d+)\.(\d+)\.(\d+)""")
+        .find(handyVersionName)
+        ?.let { m ->
+            m.groupValues[1].toInt() * 10000 +
+                m.groupValues[2].toInt() * 100 +
+                m.groupValues[3].toInt()
+        }
+        ?: 1001
+
+base {
+    archivesName.set("Handy-v$handyVersionName")
+}
+
 android {
     namespace = "com.pais.handy"
     compileSdk = 36
@@ -12,8 +33,8 @@ android {
         applicationId = "com.pais.handy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1001
-        versionName = "0.10.1"
+        versionCode = handyVersionCode
+        versionName = handyVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
