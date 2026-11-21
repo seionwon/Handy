@@ -99,7 +99,7 @@ androidComponents {
     }
 }
 
-// FocusTempo처럼 프로젝트 루트에도 동일한 이름의 APK를 자동 복사해 실행 탭에서 바로 노출되게 한다.
+// 프로젝트 루트에만 버전 포함 APK 1개만 유지해 CodeMemo 실행 탭에 중복 APK가 뜨지 않도록 한다.
 val syncRootDebugApk = tasks.register("syncRootDebugApk") {
     val debugApkDir = layout.buildDirectory.dir("outputs/apk/debug")
     val repoRoot = rootProject.projectDir.parentFile
@@ -114,6 +114,7 @@ val syncRootDebugApk = tasks.register("syncRootDebugApk") {
                     file.name != apkName
             }?.forEach { it.delete() }
             srcApk.copyTo(File(repoRoot, apkName), overwrite = true)
+            srcApk.delete()
         }
     }
 }

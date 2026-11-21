@@ -46,12 +46,17 @@ result
 # Python bytecode (scripts/)
 __pycache__/
 
-# Built Android & Windows installer artifacts kept locally for installation
+# Built Android, macOS, and Windows installer artifacts kept locally for installation
 /Handy-v*.apk
 /Handy.apk
+/Handy-*.pkg
+/Handy-*.pkg.sha256
+/Handy-*.dmg
 /Handy_*.exe
 /Handy_*.msi
 windows-dist/
 public/downloads/
 android/downloads/
 .codememo-build/
+# CodeMemo (대화 첨부 · 빌드 요청 스풀) — git 에 담지 않는다
+.cc-uploads/

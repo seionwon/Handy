@@ -183,3 +183,53 @@ CodeMemo 실행 버튼을 눌렀을 때 버전 번호가 붙은 Android APK 다�
 #### 실제 반영 상태 및 한계
 
 - 로컬 `main` 브랜치에 반영 및 APK 생성·검증을 완료했으며, 실제 Android 기기에서의 설치 및 동작 확인은 실기기에서 직접 진행이 필요합니다.
+
+<a id="hist-20261121-005"></a>
+
+### 2026-11-21 21:28:53 +09:00 — 포크 버전 `0.10.2-seionwon` 승격, MS Windows x64·macOS ARM64 설치 파일 빌드 및 실행 탭 단일 파일 정리
+
+| 항목      | 내용                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------- |
+| ID        | `hist-20261121-005`                                                                               |
+| 변경 종류 | 포크 버전 정책 반영 · MS Windows x64 CI 빌드 · macOS ARM64 PKG 패키징 · 실행 탭 중복 산출물 정리  |
+| 상태      | Windows x64(NSIS/MSI)·macOS ARM64(PKG)·Android(APK) 빌드 및 검증 완료 (실기기 실행 테스트는 별도) |
+
+#### 목적
+
+포크 버전 정책(`-seionwon` 접미사)에 따라 전체 플랫폼 버전을 `0.10.2-seionwon`으로 통일하고, GitHub Actions(`windows-latest`)에서 MS Windows x64 설치 파일(NSIS·MSI)을 빌드·감사해 내려받는 한편, macOS Apple Silicon PKG 설치 파일을 빌드해 루트에 배치하고 Android APK 중복 복사본을 제거해 CodeMemo 실행 탭에 플랫폼별 설치 파일만 깔끔하게 노출되도록 합니다.
+
+#### 열어보는 위치 및 사용 방법
+
+- **프로젝트 루트 설치 파일 (CodeMemo 실행 탭 노출 대상)**:
+  - **Android**: `Handy-v0.10.2-seionwon.apk` (단일 파일만 유지, `android/app/build/outputs/apk/debug/` 중복본 자동 제거)
+  - **macOS (Apple Silicon)**: `Handy-ScreenSharing-0.10.2-seionwon-arm64.pkg` (및 `.sha256` 체크섬)
+  - **MS Windows x64**: `Handy_0.10.2-seionwon_x64-setup.exe` (일반 설치 + 포터블 모드 지원 NSIS), `Handy_0.10.2-seionwon_x64_en-US.msi` (MSI)
+- **Windows 재빌드 워크플로**: GitHub Actions `.github/workflows/windows-fork-build.yml` (`workflow_dispatch`, 선택적으로 `include_arm64` 지원). `src-tauri/tauri.windows-fork.conf.json`으로 업스트림 Azure 서명 명령(`trusted-signing-cli`)과 업스트림 업데이터 산출물을 비활성화하고 `--features disable-updater`로 빌드합니다.
+- **macOS 재빌드 명령**: `CMAKE_POLICY_VERSION_MINIMUM=3.5 bun scripts/build-macos-share.ts --arm64-only` (`scripts/build-macos-share.ts`·`scripts/verify-macos-package.ts`가 `-seionwon` SemVer 버전을 지원하며, Apple `pkgbuild`/Distribution의 숫자 전용 필드는 `0.10.2`로, `CFBundleShortVersionString`과 PKG 파일명은 `0.10.2-seionwon`으로 기록).
+
+#### 주요 동작 및 오류 처리
+
+- **버전 정책 일관 적용**: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, Android `versionName`, macOS `CFBundleShortVersionString`, 설치 파일명 모두 `0.10.2-seionwon`을 사용하고, 숫자 전용 필드(Android `versionCode=1002`, Windows MSI `ProductVersion=0.10.2`, macOS `pkgbuild --version 0.10.2`)는 규격에 맞는 숫자 값을 유지합니다.
+- **Windows 앱 로컬 런타임 포함**: Windows x64 빌드에 Vulkan SDK 1.4.309.0 + `spirv-headers`로 컴파일된 `transcribe-cpp` 런타임/백엔드 DLL 13개와 VC++ 재배포 런타임 DLL 9개(`msvcp140.dll`, `vcruntime140.dll`, `vcomp140.dll` 포함)를 앱 로컬로 번들해 별도 VC++ 재배포 패키지 없이 실행되도록 했습니다.
+- **Android 실행 탭 중복 제거**: `android/app/build.gradle.kts`의 `syncRootDebugApk` 태스크와 `scripts/build-android.ts`가 루트 `Handy-v0.10.2-seionwon.apk`로 복사한 뒤 `android/app/build/outputs/apk/debug/*.apk` 원본을 삭제해 프로젝트 전체에 Android APK가 1개만 남도록 보장합니다.
+
+#### 검증 결과
+
+- **MS Windows x64 CI (`seionwon/Handy` run `44900119452`)**:
+  - NSIS(`Handy_0.10.2-seionwon_x64-setup.exe`, 16.5 MB) 및 MSI(`Handy_0.10.2-seionwon_x64_en-US.msi`, 31.3 MB) 빌드 성공
+  - Windows release Rust 단위 테스트: `354 passed; 0 failed; 20 ignored` 통과
+  - Windows 런타임 감사: NSIS `/S /PORTABLE` 무인 설치 및 `msiexec /a` MSI 추출 후 `handy.exe`·전체 스테이징 DLL 존재 및 `handy.exe --list-devices` 정상 종료 확인
+  - 로컬 다운로드 후 `shasum -a 256 -c` 검증 통과 (NSIS `56b6736e3c41…`, MSI `218b36e4b59c…`)
+- **macOS ARM64 PKG (`Handy-ScreenSharing-0.10.2-seionwon-arm64.pkg`, 14.1 MB)**:
+  - 지속 로컬 서명 인증서(`Handy Local Build`, `f833ee2fd790…`) 서명 및 `codesign --verify --deep --strict` 통과
+  - `scripts/verify-macos-package.ts` 통과(네이티브 `must-close`, `/Applications/Handy.app` 고정, 스크립트 없음, `0.10.2-seionwon`·`arm64` 일치 확인) 및 `shasum -a 256 -c` 통과(`ae81e577d074…`)
+- **Android APK (`Handy-v0.10.2-seionwon.apk`, 24.5 MB)**:
+  - `./android/gradlew testDebugUnitTest assembleDebug` 및 `bun run build:android --publish-only` (`apksigner verify --verbose`, `versionCode=1002`) 통과, 프로젝트 전체에 APK 1개만 존재 확인
+- **프론트엔드·로컬 Rust 검사**: `bun run lint`, `bun run build`, `bun run test:qr`, `bun run check:translations`, `bun run test:permissions`, `bun run test:keyboard`, `cargo test --features disable-updater --lib --locked` 통과
+
+#### 실제 반영 상태 및 한계
+
+- **설치 파일 위치**: 프로젝트 루트에 Android APK 1개, macOS ARM64 PKG 1개, Windows x64 NSIS/MSI 2개가 모두 준비되어 있으며 `.gitignore`로 Git 커밋에서는 제외되어 있습니다.
+- **미수행 항목 / 한계**:
+  - macOS 패키지는 현재 설치된 Rust 타깃(`aarch64-apple-darwin`) 및 Command Line Tools SDK 기준으로 `--arm64-only`(Apple Silicon 전용, Apple Intelligence 스텁)로 빌드되었습니다. Intel Mac 겸용 Universal 또는 Apple Intelligence 활성화 빌드가 필요하면 `rustup target add x86_64-apple-darwin` 및 Xcode 라이선스 동의 후 `bun scripts/build-macos-share.ts`를 실행해야 합니다.
+  - Windows 설치 파일은 업스트림 Azure 코드 서명 없이 빌드되어 Windows SmartScreen 경고에서 "추가 정보 → 실행"이 필요하며, 실제 Windows PC에서의 GUI 녹음/붙여넣기 테스트와 macOS/Android 실기기 설치 테스트는 직접 확인이 필요합니다.
