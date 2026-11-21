@@ -107,15 +107,6 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
-      - name: Run Windows Rust unit tests
-        if: ${{ !inputs.skip_tests }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          bun run build
-          cargo test --manifest-path src-tauri/Cargo.toml --features disable-updater --lib --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
       - name: Build Windows NSIS installer (Normal + Portable)
         shell: pwsh
         run: |
@@ -144,6 +135,16 @@ jobs:
           } finally {
             Remove-Item -Force -ErrorAction SilentlyContinue $msiConfigPath
           }
+
+      - name: Run Windows Rust unit tests
+        if: ${{ !inputs.skip_tests }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $libsDir = (Resolve-Path "src-tauri/transcribe-libs").Path
+          $env:PATH = "$libsDir;$env:PATH"
+          cargo test --manifest-path src-tauri/Cargo.toml --features disable-updater --lib --release --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Audit Windows packages and collect versioned installers
         shell: pwsh
