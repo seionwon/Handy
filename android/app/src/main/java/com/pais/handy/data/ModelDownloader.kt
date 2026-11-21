@@ -1,6 +1,7 @@
 package com.pais.handy.data
 
 import android.content.Context
+import com.pais.handy.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -165,7 +166,7 @@ class ModelDownloader(context: Context) {
                 instanceFollowRedirects = false
                 connectTimeout = 15_000
                 readTimeout = 30_000
-                setRequestProperty("User-Agent", "Handy-Android/0.10.1")
+                setRequestProperty("User-Agent", "Handy-Android/${BuildConfig.VERSION_NAME}")
                 if (rangeStart > 0L) {
                     setRequestProperty("Range", "bytes=$rangeStart-")
                 }

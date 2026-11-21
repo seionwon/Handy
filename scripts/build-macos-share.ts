@@ -185,14 +185,20 @@ try {
   const distribution = await Bun.file(
     join(root, "packaging/macos/Distribution.xml"),
   ).text();
-  if (!/^\d+\.\d+\.\d+$/.test(config.version)) {
-    throw new Error("The macOS installer requires a numeric release version.");
+  const versionMatch = /^(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(
+    config.version,
+  );
+  if (!versionMatch) {
+    throw new Error(
+      "The macOS installer requires a SemVer release version (e.g. 0.10.2-seionwon).",
+    );
   }
+  const numericPkgVersion = versionMatch[1];
   const distributionPath = join(staging, "Distribution.xml");
   await Bun.write(
     distributionPath,
     distribution
-      .replaceAll("@VERSION@", config.version)
+      .replaceAll("@VERSION@", numericPkgVersion)
       .replaceAll("@ARCHITECTURES@", arm64Only ? "arm64" : "arm64,x86_64"),
   );
   // Native Installer closes Handy before payload replacement. Keep the bundle
@@ -207,7 +213,7 @@ try {
     "--identifier",
     "com.pais.handy.pkg",
     "--version",
-    config.version,
+    numericPkgVersion,
     "--install-location",
     "/",
     "--ownership",

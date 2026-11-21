@@ -46,9 +46,12 @@ result
 # Python bytecode (scripts/)
 __pycache__/
 
-# Built Android APK artifacts served locally for phone install
+# Built Android & Windows installer artifacts kept locally for installation
 /Handy-v*.apk
 /Handy.apk
+/Handy_*.exe
+/Handy_*.msi
+windows-dist/
 public/downloads/
 android/downloads/
 .codememo-build/

@@ -8,7 +8,7 @@ val handyVersionName: String =
         .takeIf { it.isFile }
         ?.readText()
         ?.let { Regex(""""version"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1) }
-        ?: "0.10.1"
+        ?: "0.10.2-seionwon"
 
 val handyVersionCode: Int =
     Regex("""^(\d+)\.(\d+)\.(\d+)""")
@@ -18,7 +18,7 @@ val handyVersionCode: Int =
                 m.groupValues[2].toInt() * 100 +
                 m.groupValues[3].toInt()
         }
-        ?: 1001
+        ?: 1002
 
 val handyApkFileName = "Handy-v$handyVersionName.apk"
 

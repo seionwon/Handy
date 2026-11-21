@@ -1,0 +1,375 @@
+name: "Windows Fork Build"
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_arm64:
+        description: "Also build Windows ARM64 (CPU-only)"
+        required: false
+        type: boolean
+        default: false
+      skip_tests:
+        description: "Skip Rust unit tests on Windows"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-windows-x64:
+    name: "Windows x64 (NSIS + MSI)"
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Enable long paths
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Read version from tauri.conf.json
+        id: ver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $conf = Get-Content -Raw "src-tauri/tauri.conf.json" | ConvertFrom-Json
+          $version = $conf.version
+          if ($version -notmatch '^(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Unexpected version format in src-tauri/tauri.conf.json: $version"
+          }
+          $numericVersion = $Matches[1]
+          Write-Host "Version        : $version"
+          Write-Host "Numeric MSI ver: $numericVersion"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "numeric_version=$numericVersion"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: windows-fork-x64-v1
+          cache-bin: false
+
+      - name: Install Vulkan SDK (Windows x64)
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
+      - name: Locate VC++ runtime redist for app-local bundling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere -latest -products * -property installationPath
+          if (-not $vsRoot) { throw "vswhere found no Visual Studio installation" }
+          $versionFile = Join-Path $vsRoot "VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt"
+          $redistVersion = (Get-Content $versionFile).Trim()
+          $archDir = Join-Path $vsRoot "VC\Redist\MSVC\$redistVersion\x64"
+          if (-not (Test-Path $archDir)) { throw "VC++ redist arch dir not found: $archDir" }
+          $crt = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.CRT" |
+            Sort-Object Name | Select-Object -Last 1
+          if (-not $crt -or -not (Test-Path (Join-Path $crt.FullName "msvcp140.dll"))) {
+            throw "VC++ CRT redist dir not found or incomplete under: $archDir"
+          }
+          $omp = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.OpenMP" |
+            Sort-Object Name | Select-Object -Last 1
+          if (-not $omp -or -not (Test-Path (Join-Path $omp.FullName "vcomp140.dll"))) {
+            throw "VC++ OpenMP redist dir not found or incomplete under: $archDir"
+          }
+          $dirs = "$($crt.FullName);$($omp.FullName)"
+          Write-Host "HANDY_VC_REDIST_DIRS=$dirs"
+          Add-Content -Path $env:GITHUB_ENV -Value "HANDY_VC_REDIST_DIRS=$dirs"
+
+      - name: Install SPIRV-Headers for transcribe-cpp Vulkan build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          vcpkg install spirv-headers:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install spirv-headers failed" }
+          $prefix = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" -replace '\\','/'
+          $combined = if ($env:CMAKE_PREFIX_PATH) { "$prefix;$env:CMAKE_PREFIX_PATH" } else { $prefix }
+          Add-Content -Path $env:GITHUB_ENV -Value "CMAKE_PREFIX_PATH=$combined"
+          Write-Host "CMAKE_PREFIX_PATH=$combined"
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Run Windows Rust unit tests
+        if: ${{ !inputs.skip_tests }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          bun run build
+          cargo test --manifest-path src-tauri/Cargo.toml --features disable-updater --lib --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Windows NSIS installer (Normal + Portable)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          bun run tauri build --bundles nsis --features disable-updater --config src-tauri/tauri.windows-fork.conf.json --ci -- --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Windows MSI installer (numeric MSI ProductVersion)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $numericVersion = "${{ steps.ver.outputs.numeric_version }}"
+          $msiConfigPath = "src-tauri/target/tauri.windows-fork-msi.conf.json"
+          @{
+            version = $numericVersion
+            bundle = @{
+              createUpdaterArtifacts = $false
+              windows = @{
+                signCommand = $null
+              }
+            }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Path $msiConfigPath -Encoding UTF8
+          try {
+            bun run tauri build --bundles msi --features disable-updater --config $msiConfigPath --ci -- --locked
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $msiConfigPath
+          }
+
+      - name: Audit Windows packages and collect versioned installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ steps.ver.outputs.version }}"
+          $bundleBase = "src-tauri/target/release/bundle"
+
+          $stagedDlls = Get-ChildItem "src-tauri/transcribe-libs" -Filter "*.dll" -ErrorAction SilentlyContinue
+          if (-not $stagedDlls) {
+            throw "src-tauri/transcribe-libs contains no DLLs"
+          }
+          foreach ($name in @("msvcp140.dll", "vcruntime140.dll", "vcomp140.dll")) {
+            if (-not ($stagedDlls | Where-Object { $_.Name -ieq $name })) {
+              throw "Staging is missing $name"
+            }
+          }
+          if (-not ($stagedDlls | Where-Object { $_.Name -like "*transcribe*" })) {
+            throw "Staging is missing transcribe runtime DLLs"
+          }
+          if (-not ($stagedDlls | Where-Object { $_.Name -like "*ggml*" })) {
+            throw "Staging is missing ggml runtime DLLs"
+          }
+
+          function Assert-PackageContents {
+            param([string]$Root, [string]$Label)
+            $handy = Get-ChildItem $Root -Filter "handy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $handy) { throw "$Label package is missing handy.exe" }
+            foreach ($dll in $stagedDlls) {
+              if (-not (Get-ChildItem $Root -Filter $dll.Name -Recurse -ErrorAction SilentlyContinue)) {
+                throw "$Label package is missing staged runtime DLL $($dll.Name)"
+              }
+            }
+            $deviceOutput = (& $handy.FullName --list-devices | Out-String)
+            $deviceOutput | Write-Host
+            if ($LASTEXITCODE -ne 0) {
+              throw "$Label handy.exe --list-devices failed with exit code $LASTEXITCODE"
+            }
+          }
+
+          $nsisPackages = Get-ChildItem (Join-Path $bundleBase "nsis") -Filter "*.exe" -ErrorAction SilentlyContinue
+          if (-not $nsisPackages) { throw "No NSIS installer produced under $bundleBase/nsis" }
+
+          $msiPackages = Get-ChildItem (Join-Path $bundleBase "msi") -Filter "*.msi" -ErrorAction SilentlyContinue
+          if (-not $msiPackages) { throw "No MSI installer produced under $bundleBase/msi" }
+
+          $outDir = "windows-artifacts"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          foreach ($pkg in $nsisPackages) {
+            Write-Host "Auditing NSIS package: $($pkg.FullName)"
+            $installDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+            New-Item -ItemType Directory -Path $installDir | Out-Null
+            try {
+              $proc = Start-Process -FilePath $pkg.FullName -ArgumentList @("/S", "/PORTABLE", "/D=$installDir") -Wait -PassThru
+              if ($proc.ExitCode -ne 0) {
+                throw "Silent portable install failed for $($pkg.FullName) (exit $($proc.ExitCode))"
+              }
+              Assert-PackageContents -Root $installDir -Label "Installed NSIS"
+            } finally {
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installDir
+            }
+            $destName = "Handy_${version}_x64-setup.exe"
+            Copy-Item -Path $pkg.FullName -Destination (Join-Path $outDir $destName) -Force
+          }
+
+          foreach ($pkg in $msiPackages) {
+            Write-Host "Auditing MSI package: $($pkg.FullName)"
+            $installDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+            New-Item -ItemType Directory -Path $installDir | Out-Null
+            try {
+              $logFile = Join-Path $installDir "msi-admin-install.log"
+              $msiArgs = "/a `"$($pkg.FullName)`" /qn /L*v `"$logFile`" TARGETDIR=`"$installDir`""
+              $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru
+              if ($proc.ExitCode -ne 0) {
+                if (Test-Path $logFile) { Get-Content $logFile | Out-Host }
+                throw "Administrative MSI extract failed for $($pkg.FullName) (exit $($proc.ExitCode))"
+              }
+              Assert-PackageContents -Root $installDir -Label "Installed MSI"
+            } finally {
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installDir
+            }
+            $destName = "Handy_${version}_x64_en-US.msi"
+            Copy-Item -Path $pkg.FullName -Destination (Join-Path $outDir $destName) -Force
+          }
+
+          $checksumLines = @()
+          foreach ($file in (Get-ChildItem $outDir -File | Sort-Object Name)) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
+            $checksumLines += "$hash  $($file.Name)"
+          }
+          $checksumLines | Set-Content -Path (Join-Path $outDir "SHA256SUMS.txt") -Encoding UTF8
+          Get-ChildItem $outDir -File | Format-Table Name, Length
+          Get-Content (Join-Path $outDir "SHA256SUMS.txt")
+
+      - name: Upload Windows x64 installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: handy-windows-x64-${{ steps.ver.outputs.version }}
+          path: windows-artifacts/*
+          retention-days: 30
+
+  build-windows-arm64:
+    name: "Windows ARM64 (NSIS + MSI)"
+    if: ${{ inputs.include_arm64 }}
+    runs-on: windows-11-arm
+    permissions:
+      contents: read
+    steps:
+      - name: Enable long paths
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Read version from tauri.conf.json
+        id: ver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $conf = Get-Content -Raw "src-tauri/tauri.conf.json" | ConvertFrom-Json
+          $version = $conf.version
+          if ($version -notmatch '^(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Unexpected version format in src-tauri/tauri.conf.json: $version"
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "numeric_version=$($Matches[1])"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add ARM64 Windows target
+        run: rustup target add aarch64-pc-windows-msvc
+
+      - name: Configure cmake for ARM64
+        shell: pwsh
+        run: |
+          echo "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
+          echo "CC=clang-cl" >> $env:GITHUB_ENV
+          echo "CXX=clang-cl" >> $env:GITHUB_ENV
+          echo "CMAKE_C_COMPILER=clang-cl" >> $env:GITHUB_ENV
+          echo "CMAKE_CXX_COMPILER=clang-cl" >> $env:GITHUB_ENV
+          echo "CMAKE_C_COMPILER_TARGET=aarch64-pc-windows-msvc" >> $env:GITHUB_ENV
+          echo "CMAKE_CXX_COMPILER_TARGET=aarch64-pc-windows-msvc" >> $env:GITHUB_ENV
+          echo "CL=/EHsc" >> $env:GITHUB_ENV
+          echo "RC=llvm-rc" >> $env:GITHUB_ENV
+          echo "TRANSCRIBE_CMAKE_ARGS=-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF" >> $env:GITHUB_ENV
+
+      - name: Locate VC++ runtime redist (ARM64)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere -latest -products * -property installationPath
+          $versionFile = Join-Path $vsRoot "VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt"
+          $redistVersion = (Get-Content $versionFile).Trim()
+          $archDir = Join-Path $vsRoot "VC\Redist\MSVC\$redistVersion\arm64"
+          $crt = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.CRT" |
+            Sort-Object Name | Select-Object -Last 1
+          Add-Content -Path $env:GITHUB_ENV -Value "HANDY_VC_REDIST_DIRS=$($crt.FullName)"
+
+      - name: Point tauri-bundler at signtool.exe (ARM64)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = @(
+            Get-ChildItem "$bin\10.0.*\arm64\signtool.exe" -ErrorAction SilentlyContinue
+            Get-ChildItem "$bin\10.0.*\x64\signtool.exe" -ErrorAction SilentlyContinue
+          ) | Where-Object { $_ } |
+            Sort-Object { $_.FullName -match '\\arm64\\' }, FullName |
+            Select-Object -Last 1
+          if (-not $signtool) { throw "signtool.exe not found under $bin" }
+          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_WINDOWS_SIGNTOOL_PATH=$($signtool.FullName)"
+
+      - name: Install frontend dependencies (ARM64)
+        run: bun install --cpu=arm64
+
+      - name: Build Windows ARM64 NSIS + MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ steps.ver.outputs.version }}"
+          $numericVersion = "${{ steps.ver.outputs.numeric_version }}"
+          bun run tauri build --target aarch64-pc-windows-msvc --bundles nsis --features disable-updater --config src-tauri/tauri.windows-fork.conf.json --ci -- --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $msiConfigPath = "src-tauri/target/tauri.windows-fork-msi.conf.json"
+          @{
+            version = $numericVersion
+            bundle = @{
+              createUpdaterArtifacts = $false
+              windows = @{
+                signCommand = $null
+              }
+            }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Path $msiConfigPath -Encoding UTF8
+          try {
+            bun run tauri build --target aarch64-pc-windows-msvc --bundles msi --features disable-updater --config $msiConfigPath --ci -- --locked
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue $msiConfigPath
+          }
+
+          $outDir = "windows-artifacts-arm64"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $bundleBase = "src-tauri/target/aarch64-pc-windows-msvc/release/bundle"
+          Get-ChildItem (Join-Path $bundleBase "nsis") -Filter "*.exe" | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $outDir "Handy_${version}_arm64-setup.exe") -Force
+          }
+          Get-ChildItem (Join-Path $bundleBase "msi") -Filter "*.msi" | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $outDir "Handy_${version}_arm64_en-US.msi") -Force
+          }
+
+      - name: Upload Windows ARM64 installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: handy-windows-arm64-${{ steps.ver.outputs.version }}
+          path: windows-artifacts-arm64/*
+          retention-days: 30

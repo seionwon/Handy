@@ -5,15 +5,19 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
 const [expanded, version, architectures] = process.argv.slice(2);
+const versionMatch = /^(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(
+  version ?? "",
+);
 if (
   !expanded ||
-  !/^\d+\.\d+\.\d+$/.test(version ?? "") ||
+  !versionMatch ||
   !["arm64", "arm64,x86_64"].includes(architectures)
 ) {
   throw new Error(
     "Usage: bun scripts/verify-macos-package.ts <expanded> <version> <architectures>",
   );
 }
+const numericPkgVersion = versionMatch[1];
 
 function requireXml(file: string, condition: string) {
   const result = execFileSync(
@@ -33,7 +37,7 @@ requireXml(
 );
 requireXml(
   distribution,
-  `//pkg-ref[@id='com.pais.handy.pkg'][@version='${version}'][@onConclusion='None'][normalize-space(text())='Handy.pkg' or normalize-space(text())='#Handy.pkg']`,
+  `//pkg-ref[@id='com.pais.handy.pkg'][@version='${numericPkgVersion}'][@onConclusion='None'][normalize-space(text())='Handy.pkg' or normalize-space(text())='#Handy.pkg']`,
 );
 requireXml(
   distribution,
@@ -53,7 +57,7 @@ const component = join(expanded, "Handy.pkg");
 const info = join(component, "PackageInfo");
 requireXml(
   info,
-  `/pkg-info[@identifier='com.pais.handy.pkg'][@version='${version}'][@install-location='/'][@relocatable='false'][@postinstall-action='none']`,
+  `/pkg-info[@identifier='com.pais.handy.pkg'][@version='${numericPkgVersion}'][@install-location='/'][@relocatable='false'][@postinstall-action='none']`,
 );
 requireXml(info, "not(//scripts) and not(//relocate/*)");
 requireXml(

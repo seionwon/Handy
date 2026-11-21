@@ -41,7 +41,7 @@ interface AndroidApkMeta {
   builtAt: string;
 }
 
-const FALLBACK_VERSION = "0.10.1";
+const FALLBACK_VERSION = "0.10.2-seionwon";
 const FALLBACK_FILE_NAME = `Handy-v${FALLBACK_VERSION}.apk`;
 const FALLBACK_RELATIVE_APK = `downloads/${FALLBACK_FILE_NAME}`;
 const RELATIVE_META_PATH = "downloads/android-apk-meta.json";

@@ -105,6 +105,7 @@ fn finish_clipboard_paste(
     paste_result
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn perform_clipboard_paste(
     paste_delay_ms: u64,
     paste_delay_after_ms: u64,
