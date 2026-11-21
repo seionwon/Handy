@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Handy</string>
+    <string name="ime_name">Handy 음성 키보드</string>
+    <string name="ime_subtype_voice">Handy 음성 입력</string>
+    <string name="ime_tap_to_speak">탭해서 말하기</string>
+    <string name="ime_hold_to_speak">누르고 말하기</string>
+    <string name="ime_listening">듣는 중…</string>
+    <string name="ime_transcribing">변환 중…</string>
+    <string name="ime_post_processing">AI 다듬기 중…</string>
+    <string name="ime_cancel">취소</string>
+    <string name="ime_space">스페이스</string>
+    <string name="ime_enter">줄바꿈</string>
+    <string name="ime_need_mic">Handy 앱에서 마이크 권한을 허용하세요</string>
+    <string name="ime_need_model">Handy에서 Whisper 모델을 받거나 즉시 인식으로 전환하세요</string>
+    <string name="ime_ai_on">AI 켜짐</string>
+    <string name="ime_ai_off">AI 꺼짐</string>
+</resources>

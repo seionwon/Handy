@@ -16,6 +16,8 @@ src-tauri/gen
 # Generated files
 src/bindings.ts
 src-tauri/src/catalog/catalog.json
+android/
+public/downloads/
 
 # Misc
 .DS_Store

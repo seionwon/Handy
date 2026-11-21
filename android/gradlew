@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if command -v gradle >/dev/null 2>&1; then
+  exec gradle -p "$SCRIPT_DIR" "$@"
+fi
+echo "Error: gradle not found on PATH. Install Gradle 9+ or run via CodeMemo." >&2
+exit 1

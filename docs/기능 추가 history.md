@@ -53,3 +53,52 @@ Handy 포크(`seionwon/Handy`)의 주요 기능 변경, 업스트림 동기화 �
   - 로컬 `/Applications/Handy.app` 배포용 macOS PKG 빌드·설치(`bun scripts/build-macos-share.ts`)와 실제 Apple 화면 공유 세션에서의 라이브 입력 확인은 이번 Git 동기화 범위에 포함되지 않아 별도 진행이 필요합니다.
   - 업스트림의 `bun run check:cjk-font` 스크립트는 업스트림 자체 리팩터링(`../src/components/onboarding/data/languages` 경로 미갱신)으로 인해 업스트림 상태 그대로 실패하며 이번 동기화 범위에서 임의 수정하지 않았습니다.
   - Playwright 브라우저 전체 스위트(`tests/permissions.spec.ts`)는 샌드박스 내 데스크톱 Chrome 실행 제한으로 인해 직접 실행하지 않고 `codememo-browser` 렌더링 확인 및 순수 로직 단위 테스트(`test:permissions`)로 검증했습니다.
+
+<a id="hist-20261121-002"></a>
+
+### 2026-11-21 12:42:27 +09:00 — 네이티브 Android 버전 및 CodeMemo 실행·휴대폰 설치 허브 추가
+
+| 항목      | 내용                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------- |
+| ID        | `hist-20261121-002`                                                                      |
+| 변경 종류 | 신규 플랫폼 앱(Android) · 네이티브 오프라인 STT · 시스템 음성 키보드(IME) · 모바일 설치  |
+| 상태      | Android APK 빌드·서명 검증·단위 테스트·브라우저 설치 허브 검증 완료 (실기기 설치는 별도) |
+
+#### 목적
+
+데스크톱 전용 Tauri 앱인 Handy(`com.pais.handy`, v0.10.1)의 핵심 경험(완전 오프라인 Whisper 받아쓰기, 실시간 입력, 오디오 파일 전사, 전사 기록, AI 후처리)을 Android 스마트폰에서도 네이티브로 사용할 수 있도록 `android/` 앱을 구축하고, CodeMemo의 실행(Run) 버튼으로 휴대폰에 바로 APK를 설치할 수 있게 합니다.
+
+#### 열어보는 위치 및 사용 방법
+
+- **CodeMemo 실행 버튼으로 휴대폰 설치**:
+  - **Android 빌드 실행**: `android/` 루트 Gradle 프로젝트(`android/gradlew`, `android/app/build.gradle.kts`)가 `android/app/build/outputs/apk/debug/app-debug.apk`를 생성합니다.
+  - **웹 설치 허브**: 일반 브라우저에서 개발/미리보기 서버(`bun run dev` / `bun run preview`, `http://127.0.0.1:1420/`)를 열면 Tauri 데스크톱 UI 대신 `AndroidInstallPage`(`src/components/android/AndroidInstallPage.tsx`)가 표시되어 원클릭 APK 다운로드(`/downloads/Handy-Android.apk`), QR 코드(`APK 바로 받기` / `설치 안내 페이지` 전환 및 LAN 주소 입력 지원), SHA-256 검증값, USB ADB 설치 명령 및 4단계 음성 키보드 활성화 안내를 제공합니다.
+  - **수동 APK 빌드·게시**: `bun run build:android` (`scripts/build-android.ts`)로 Debug APK 빌드·`apksigner` 서명 검증 후 `public/downloads/Handy-Android.apk`와 `android-apk-meta.json`에 게시할 수 있으며, Vite 미들웨어(`vite.config.ts`)도 최신 Gradle 빌드 APK를 `application/vnd.android.package-archive` 헤더로 자동 스트리밍합니다.
+- **Android 앱 화면 구성 (`com.pais.handy`)**:
+  - **받아쓰기(Dictate)**: 길게 누르기/토글 녹음, 실시간 오디오 레벨 미터, 모델 다운로드 없이 즉시 동작하는 `Android 즉시 음성 인식`(`SpeechRecognizer`) 및 온디바이스 `Whisper.cpp` 전환, 복사·공유·음성 키보드 설정 바로가기.
+  - **기록(History)**: 로컬 SQLite(`HistoryDatabase`) 전사 기록 검색·복사·WAV 재생·재전사 및 기기 내 오디오 파일(M4A/MP3/WAV) 디코딩 전사(`AudioFileDecoder`).
+  - **모델(Models)**: Whisper Tiny/Base/Small(Multilingual & English) GGML 모델 다운로드·진행률·삭제·활성 모델 선택.
+  - **설정(Settings)**: 전사 언어, 길게 눌러 말하기, 필러 제거, 사용자 정의 단어, AI 후처리(OpenAI/Anthropic/OpenRouter/Groq/Custom), 라이트/다크/시스템 테마(Handy `#DA5893`/`#FAA2CA`·`#FBFBFB`/`#2C2B29` 토큰 반영), 한국어·영어 리소스.
+  - **시스템 전체 `Handy 음성 키보드` (`HandyInputMethodService`)**: 안드로이드 `설정 > 일반 > 키보드 목록 및 기본 키보드`에서 활성화하면 카카오톡·메모·브라우저 등 모든 앱 입력창에서 음성 입력·스페이스·엔터·백스페이스·키보드 전환을 사용할 수 있습니다.
+
+#### 주요 동작 및 오류 처리
+
+- **온디바이스 Whisper.cpp NDK 엔진**: `whisper.cpp` v1.9.5 CPU 소스(MIT)를 `android/app/src/main/cpp/whisper/`에 벤더링하고 CMake 3.22.1 + NDK 28.2로 `arm64-v8a`, `x86_64`용 `libhandy_whisper.so`를 `-O3`로 빌드했습니다. JNI 브리지(`handy_whisper_jni.cpp`)는 Modified UTF-8 깨짐을 막기 위해 UTF-8 바이트 배열로 텍스트를 전달합니다.
+- **보안 및 안정성**: `LlmClient.kt`는 리디렉션으로 인한 API 키 유출을 막기 위해 `instanceFollowRedirects = false`를 적용했고, `TextPostProcessor.kt`는 경로 이탈 파일명 차단 및 `<think>` 블록 정리·빈 응답 거부를 수행합니다.
+- **데스크톱 앱 무영향 격리**: `src/main.tsx`는 `"__TAURI_INTERNALS__" in window`일 때 기존 Tauri 데스크톱 초기화 경로를 그대로 유지하고, 일반 브라우저 환경에서만 `AndroidInstallPage`를 동적 임포트합니다. `vite.config.ts`의 `127.0.0.1` 바인딩(GHSA-p9ff-h696-f583 방어)도 그대로 유지했습니다.
+
+#### 검증 결과
+
+- `./android/gradlew testDebugUnitTest assembleDebug`: Kotlin/Compose 및 CMake/NDK `whisper.cpp`(`arm64-v8a`, `x86_64`) 빌드 성공, JUnit 단위 테스트 9개 전체 통과(`LlmClientTest` 2, `TextPostProcessorTest` 4, `WavCodecTest` 3)
+- `bun run build:android --publish-only`: `apksigner verify --verbose` 통과(APK Signature Scheme v2, 1 signer, 24.48 MB), `lib/arm64-v8a/libhandy_whisper.so` 및 `lib/x86_64/libhandy_whisper.so` 포함 확인
+- `bun run test:qr`: 순수 TypeScript QR 매트릭스 생성기 단위 테스트 통과
+- `bun run lint`, `bun run build`, `bun run check:translations`, `bun run test:permissions`, `bun run test:keyboard`: 모두 오류 없이 통과
+- HTTP 헤더 검증: `GET/HEAD /downloads/Handy-Android.apk`가 `200 OK`, `Content-Type: application/vnd.android.package-archive`, `Content-Disposition: attachment; filename="Handy-Android.apk"` 반환 확인
+- `codememo-browser` 시각 검증: `1280×800`(한국어 전환 포함) 및 `390×844`(모바일) 뷰포트에서 오류 0건, QR 코드·APK 메타데이터·설치 안내 레이아웃 정상 렌더링 확인
+
+#### 실제 반영 상태 및 한계
+
+- **빌드 산출물 위치**: `android/app/build/outputs/apk/debug/app-debug.apk` 및 `public/downloads/Handy-Android.apk`(gitignored)에 즉시 설치 가능한 Debug APK가 생성되어 있습니다.
+- **미수행 항목 / 한계**:
+  - 실제 물리 Android 스마트폰에서의 APK 사이드로드 설치, 마이크 녹음, Whisper 모델 다운로드 및 `Handy 음성 키보드` 타 앱 입력 동작은 호스트에 연결된 Android 기기가 없어 에뮬레이터/실기기 테스트를 수행하지 못했습니다.
+  - 플레이스토어 배포용 Release 키스토어 서명은 포함하지 않았으며 로컬/휴대폰 설치용 Debug 서명 APK로 구성되어 있습니다.

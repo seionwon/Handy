@@ -1,0 +1,1 @@
+-keep class com.pais.handy.stt.WhisperNative { *; }

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Handy</string>
+    <string name="ime_name">Handy Voice Keyboard</string>
+    <string name="ime_subtype_voice">Handy Voice</string>
+    <string name="ime_tap_to_speak">Tap to speak</string>
+    <string name="ime_hold_to_speak">Hold to speak</string>
+    <string name="ime_listening">Listening…</string>
+    <string name="ime_transcribing">Transcribing…</string>
+    <string name="ime_post_processing">Polishing…</string>
+    <string name="ime_cancel">Cancel</string>
+    <string name="ime_space">Space</string>
+    <string name="ime_enter">Enter</string>
+    <string name="ime_need_mic">Allow microphone permission in Handy</string>
+    <string name="ime_need_model">Download a Whisper model in Handy or switch to Instant</string>
+    <string name="ime_ai_on">AI On</string>
+    <string name="ime_ai_off">AI Off</string>
+</resources>
