@@ -22,11 +22,11 @@ test("a listed but denied app keeps an actionable settings button", async ({
   page,
 }) => {
   await page.goto(fixture);
-  await page.getByRole("button", { name: "Open System Settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
   await expect(
     page.getByText(/macOS has not authorized this copy/),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Open System Settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
   await expect
     .poll(() =>
       page.evaluate(
@@ -53,7 +53,7 @@ test("slow permission checks do not accumulate overlapping polls", async ({
   // After those first checks settle, later polls must remain sequential.
   await page.goto(fixture + "?delay=1200");
   await expect(
-    page.getByRole("button", { name: "Open System Settings" }),
+    page.getByRole("button", { name: "Open settings" }),
   ).toBeVisible();
   await page.evaluate(
     "window.permissionHarness.maxInFlight = window.permissionHarness.inFlight",
@@ -79,8 +79,8 @@ test("microphone permission uses the safe native request command and remains ret
   page,
 }) => {
   await page.goto(fixture + "?granted&microphoneDenied");
-  await page.getByRole("button", { name: "Grant Permission" }).click();
-  await page.getByRole("button", { name: "Open System Settings" }).click();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
   await expect
     .poll(() =>
       page.evaluate(
@@ -92,90 +92,45 @@ test("microphone permission uses the safe native request command and remains ret
 
 test("permission previews remain inert", async ({ page }) => {
   await page.goto(fixture + "?preview");
-  await page.getByRole("button", { name: "Grant Permission" }).last().click();
+  await page.getByRole("button", { name: "Allow" }).last().click();
   expect(await page.evaluate("window.permissionHarness.calls")).toEqual([]);
   expect(await page.evaluate("window.permissionHarness.completed")).toBe(0);
 });
 
-for (const view of ["onboarding", "legacy"]) {
-  test(`${view} reuses permission enabled since the last UI check`, async ({
-    page,
-  }) => {
-    await page.goto(fixture + (view === "legacy" ? "?legacy" : ""));
-    const button = page.getByRole("button", { name: "Open System Settings" });
-    await expect(button).toBeVisible();
-    await page.evaluate("window.permissionHarness.accessibility = true");
-    await button.click();
-    await expect(button).toHaveCount(0);
-    const calls: string[] = await page.evaluate(
-      "window.permissionHarness.calls",
-    );
-    expect(calls).not.toContain("open_accessibility_settings");
-  });
-
-  test(`${view} opens one permission pane without a second system prompt`, async ({
-    page,
-  }) => {
-    await page.goto(
-      fixture + `?requestDelay=500${view === "legacy" ? "&legacy" : ""}`,
-    );
-    const button = page.getByRole("button", { name: "Open System Settings" });
-    await expect(button).toBeVisible();
-    await button.evaluate((element) => {
-      (element as HTMLButtonElement).click();
-      (element as HTMLButtonElement).click();
-    });
-    await expect(button).toBeDisabled();
-    await expect(button).toBeEnabled();
-    const calls: string[] = await page.evaluate(
-      "window.permissionHarness.calls",
-    );
-    expect(
-      calls.filter((command) => command === "open_accessibility_settings"),
-    ).toHaveLength(1);
-    expect(
-      calls.filter((command) =>
-        command.endsWith("request_accessibility_permission"),
-      ),
-    ).toHaveLength(view === "legacy" ? 0 : 1);
-  });
-}
-
-test("legacy card stays hidden while an existing grant is checked", async ({
+test("onboarding reuses permission enabled since the last UI check", async ({
   page,
 }) => {
-  await page.goto(fixture + "?legacy&granted&delay=1000");
-  await page.waitForFunction("Boolean(window.permissionHarness)");
-  await expect
-    .poll(() => page.evaluate("window.permissionHarness.inFlight"))
-    .toBeGreaterThan(0);
-  await expect(
-    page.getByRole("button", { name: "Open System Settings" }),
-  ).toHaveCount(0);
-  await expect
-    .poll(() => page.evaluate("window.permissionHarness.inFlight"))
-    .toBe(0);
-  await expect(
-    page.getByRole("button", { name: "Open System Settings" }),
-  ).toHaveCount(0);
+  await page.goto(fixture);
+  const button = page.getByRole("button", { name: "Open settings" });
+  await expect(button).toBeVisible();
+  await page.evaluate("window.permissionHarness.accessibility = true");
+  await button.click();
+  await expect(button).toHaveCount(0);
+  const calls: string[] = await page.evaluate("window.permissionHarness.calls");
+  expect(calls).not.toContain("open_accessibility_settings");
 });
 
-test("legacy card refreshes the existing grant when Handy regains focus", async ({
+test("onboarding opens one permission pane without a second system prompt", async ({
   page,
 }) => {
-  await page.goto(fixture + "?legacy");
-  const button = page.getByRole("button", { name: "Open System Settings" });
+  await page.goto(fixture + "?requestDelay=500");
+  const button = page.getByRole("button", { name: "Open settings" });
   await expect(button).toBeVisible();
-  await page.evaluate(() => {
-    (
-      window as unknown as { permissionHarness: { accessibility: boolean } }
-    ).permissionHarness.accessibility = true;
-    window.dispatchEvent(new Event("focus"));
+  await button.evaluate((element) => {
+    (element as HTMLButtonElement).click();
+    (element as HTMLButtonElement).click();
   });
-  await expect(button).toHaveCount(0);
-  expect(await page.evaluate("window.permissionHarness.calls")).not.toContain(
-    "open_accessibility_settings",
-  );
+  await expect(button).toBeDisabled();
+  await expect(button).toBeEnabled();
+  const calls: string[] = await page.evaluate("window.permissionHarness.calls");
+  expect(
+    calls.filter((command) => command === "open_accessibility_settings"),
+  ).toHaveLength(1);
+  expect(
+    calls.filter((command) =>
+      command.endsWith("request_accessibility_permission"),
+    ),
+  ).toHaveLength(1);
 });
 
 test("Check Again reads the current grant without reopening settings", async ({
@@ -197,7 +152,7 @@ test("permission recovery uses one normal restart and never initializes input", 
   page,
 }) => {
   await page.goto(fixture);
-  await page.getByRole("button", { name: "Open System Settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
   const restart = page.getByRole("button", { name: "Restart Handy" });
   await expect(restart).toBeVisible();
   await expect(restart).toBeEnabled();
@@ -224,7 +179,7 @@ test("permission recovery stays reachable at Handy's minimum window size", async
 }) => {
   await page.setViewportSize({ width: 680, height: 570 });
   await page.goto(fixture);
-  await page.getByRole("button", { name: "Open System Settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
   await page.mouse.move(340, 480);
   await page.mouse.wheel(0, 1000);
   await expect(
@@ -241,7 +196,7 @@ test("denied onboarding requests one native consent dialog without opening setti
 }) => {
   await page.goto(fixture + "?requestDelay=400");
   await expect(
-    page.getByRole("button", { name: "Open System Settings" }),
+    page.getByRole("button", { name: "Open settings" }),
   ).toBeVisible();
   await page.waitForTimeout(1300);
   const calls: string[] = await page.evaluate("window.permissionHarness.calls");

@@ -30,18 +30,26 @@ assert.equal((await checkStartup(options)).step, "done");
 returning = false;
 assert.equal(
   (await checkStartup(options)).step,
-  "model",
-  "new settings with existing grants skip permission onboarding",
+  "flow",
+  "new settings start first-run onboarding flow (which skips permissions when already granted)",
 );
-for (const hasCompletedOnboarding of [true, false]) {
-  returning = hasCompletedOnboarding;
-  accessibility = false;
-  assert.equal((await checkStartup(options)).step, "accessibility");
-  accessibility = true;
-  microphone = false;
-  assert.equal((await checkStartup(options)).step, "accessibility");
-  microphone = true;
-}
+assert.equal(
+  (await checkStartup(options)).permissionsGranted,
+  true,
+  "existing grants are reported to startup",
+);
+returning = true;
+accessibility = false;
+assert.equal((await checkStartup(options)).step, "permissions");
+accessibility = true;
+microphone = false;
+assert.equal((await checkStartup(options)).step, "permissions");
+microphone = true;
+returning = false;
+accessibility = false;
+assert.equal((await checkStartup(options)).step, "flow");
+assert.equal((await checkStartup(options)).permissionsGranted, false);
+accessibility = true;
 returning = true;
 retired = true;
 assert.equal((await checkStartup(options)).step, "migration");
@@ -49,7 +57,7 @@ assert.equal((await checkStartup(options)).migrationModelId, "test-model");
 accessibility = false;
 assert.equal(
   (await checkStartup(options)).step,
-  "accessibility",
+  "permissions",
   "a retired model does not bypass a denied grant",
 );
 const failedCheck = await checkStartup({
@@ -60,7 +68,7 @@ const failedCheck = await checkStartup({
 });
 assert.equal(
   failedCheck.step,
-  "accessibility",
+  "permissions",
   "query errors must not allow input initialization",
 );
 assert.equal(
@@ -78,7 +86,7 @@ assert.equal(
 microphone = false;
 assert.equal(
   (await checkStartup({ ...options, platform: "windows" })).step,
-  "accessibility",
+  "permissions",
 );
 assert.equal(permissionChecks, previousChecks, "macOS queries stay macOS-only");
 console.log("startup permission routing: all assertions passed");

@@ -3,18 +3,24 @@ use crate::audio_toolkit::{
     apply_custom_words, detect_output_language, normalize_transcription_output,
     remove_filler_words, OutputLanguageEvidence,
 };
-use crate::chinese_script::{convert_chinese_script, ChineseVariety};
+use crate::chinese_script::{chinese_variety_for_text, convert_chinese_script};
 use crate::engine_supervisor::{
     CancelMark, DeviceInfo, DeviceSelector, EngineError, EngineSupervisor, LoadSpec, LoadedInfo,
     Unloading,
 };
-use crate::managers::audio::AudioRecordingManager;
+use crate::language_detection::speech::speech_head;
+use crate::language_detection::{
+    IdentifyError, LanguageDecision, LanguageDetector, LanguageSource, Plan,
+};
+use crate::managers::audio::{create_smoothed_detector, AudioRecordingManager};
 use crate::managers::model::ModelManager;
+use crate::notices::{self, Notice, NoticeCode, NoticeSource};
+use crate::overlay;
 use crate::settings::{
     get_settings, AppSettings, ChineseScript, ModelUnloadTimeout, TranscribeAcceleratorSetting,
 };
 use anyhow::Result;
-use chunked::ChunkedDecode;
+use chunked::{ChunkSetup, ChunkedDecode};
 use live::LiveSession;
 use log::{debug, error, info, warn};
 use policy::{batch_decode, live_decode, BatchDecode, ModelTraits};
@@ -30,12 +36,15 @@ use tauri_specta::Event;
 use transcribe_cpp::{Backend, RunOptions, Task, Transcript};
 
 mod chunked;
+mod job;
 mod live;
 pub mod policy;
 
+pub use job::ChunkControl;
+
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 
-fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = payload.downcast_ref::<String>() {
@@ -263,6 +272,12 @@ pub struct TranscriptionManager {
     /// yet. This prevents a second worker from starting after finalize/cancel
     /// closes the router but before the first worker has fully exited.
     active_stream_worker: Arc<AtomicU64>,
+    /// True while a background job is queued or running. It holds the model,
+    /// so one transcript is never written by two models.
+    job_active: Arc<AtomicBool>,
+    /// Handy's spoken-language detector, loaded in this process on first
+    /// use and unloaded with the model.
+    language_detector: Arc<LanguageDetector>,
 }
 
 impl TranscriptionManager {
@@ -282,6 +297,8 @@ impl TranscriptionManager {
             stream_active: Arc::new(AtomicBool::new(false)),
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
+            job_active: Arc::new(AtomicBool::new(false)),
+            language_detector: Arc::new(LanguageDetector::default()),
         };
 
         // Start the idle watcher
@@ -309,12 +326,12 @@ impl TranscriptionManager {
                         continue;
                     }
 
-                    // While recording, keep the idle timer fresh so the
-                    // model is never unloaded mid-session.
+                    // While recording or transcribing a file, keep the idle
+                    // timer fresh so the model is never unloaded mid-session.
                     let is_recording = app_handle_cloned
                         .try_state::<Arc<AudioRecordingManager>>()
                         .is_some_and(|a| a.is_recording());
-                    if is_recording {
+                    if is_recording || manager_cloned.job_active() {
                         manager_cloned.touch_activity();
                         continue;
                     }
@@ -450,6 +467,7 @@ impl TranscriptionManager {
     /// it. Only the worker's exit is left to wait for.
     fn begin_unload(&self) -> Unloading {
         let unloading = self.engine.unload();
+        self.language_detector.unload();
         {
             let mut current_model = self.current_model_id.lock().unwrap();
             *current_model = None;
@@ -484,6 +502,11 @@ impl TranscriptionManager {
     /// is loaded. Never waits for the worker to exit, so it is safe on any
     /// thread, including the event loop.
     pub fn maybe_unload_immediately(&self, context: &str) {
+        // A file job keeps the model for its remaining chunks; it unloads
+        // the model itself when it ends.
+        if self.job_active() {
+            return;
+        }
         let settings = get_settings(&self.app_handle);
         if settings.model_unload_timeout == ModelUnloadTimeout::Immediately
             && self.is_model_loaded()
@@ -601,7 +624,8 @@ impl TranscriptionManager {
                 device,
             })
             .map_err(|e| {
-                let error_msg = format!("Failed to load model {}: {}", model_id, e);
+                // The worker's error already says it failed to load.
+                let error_msg = e.to_string();
                 emit_loading_failed(&error_msg);
                 anyhow::anyhow!(error_msg)
             })?;
@@ -652,6 +676,12 @@ impl TranscriptionManager {
                 error: None,
             },
         );
+        // Only this code: the source's other notices aren't about the model.
+        for source in [NoticeSource::Dictation, NoticeSource::Model] {
+            for code in [NoticeCode::ModelLoadFailed, NoticeCode::NoModelSelected] {
+                notices::clear_matching(&self.app_handle, source, Some(code));
+            }
+        }
 
         let load_duration = load_start.elapsed();
         debug!(
@@ -662,16 +692,18 @@ impl TranscriptionManager {
         Ok(())
     }
 
-    /// Kicks off the model loading in a background thread if it's not already loaded
-    pub fn initiate_model_load(&self) {
+    /// Starts loading the model in the background unless it's loaded or
+    /// loading, and returns whether it did. Only a dictation sets
+    /// `raise_notice`: file jobs and Settings report their own failures.
+    pub fn initiate_model_load(&self, raise_notice: bool) -> bool {
         let mut is_loading = self.is_loading.lock().unwrap();
         if *is_loading {
-            return;
+            return false;
         }
 
         let reload_pending = self.reload_model_on_next_use.load(Ordering::Acquire);
         if !reload_pending && self.is_model_loaded() {
-            return;
+            return false;
         }
 
         *is_loading = true;
@@ -684,12 +716,54 @@ impl TranscriptionManager {
             }
             let settings = get_settings(&self_clone.app_handle);
             if let Err(e) = self_clone.load_model(&settings.selected_model) {
-                error!("Failed to load model: {}", e);
+                error!("Failed to load model {}: {}", settings.selected_model, e);
+                if raise_notice {
+                    self_clone.raise_model_load_failed(&settings.selected_model, &e);
+                }
             }
             let mut is_loading = self_clone.is_loading.lock().unwrap();
             *is_loading = false;
             self_clone.loading_condvar.notify_all();
         });
+        true
+    }
+
+    /// Ends when a model next loads.
+    pub fn model_load_notice(
+        &self,
+        model_id: &str,
+        error: &anyhow::Error,
+        source: NoticeSource,
+    ) -> Notice {
+        let detail = match self.model_manager.get_model_info(model_id) {
+            Some(model) => format!("{}: {error}", model.name),
+            None => error.to_string(),
+        };
+        Notice::new(NoticeCode::ModelLoadFailed, source).with_detail(detail)
+    }
+
+    pub fn raise_model_load_failed(&self, model_id: &str, error: &anyhow::Error) {
+        let notice = self.model_load_notice(model_id, error, NoticeSource::Dictation);
+        self.raise_dictation_notice(notice);
+    }
+
+    /// The selection is empty (its files were gone at startup), so there is
+    /// nothing to load. Ends when a model next loads.
+    pub fn raise_no_model_selected(&self) {
+        self.raise_dictation_notice(Notice::new(
+            NoticeCode::NoModelSelected,
+            NoticeSource::Dictation,
+        ));
+    }
+
+    fn raise_dictation_notice(&self, notice: Notice) {
+        // A recording in progress keeps the overlay; its transcription fails
+        // next and reports that itself.
+        if overlay::is_session_showing() {
+            notices::raise_without_overlay(&self.app_handle, notice);
+        } else {
+            notices::raise(&self.app_handle, notice);
+        }
     }
 
     pub fn get_current_model(&self) -> Option<String> {
@@ -702,6 +776,24 @@ impl TranscriptionManager {
     /// than falling back to CPU/auto); `None` when no model is loaded.
     pub fn current_backend(&self) -> Option<String> {
         self.engine.loaded().map(|info| info.backend)
+    }
+
+    /// Whether a file job is queued or running, which holds the model.
+    pub fn job_active(&self) -> bool {
+        self.job_active.load(Ordering::Acquire)
+    }
+
+    pub fn set_job_active(&self, active: bool) {
+        self.job_active.store(active, Ordering::Release);
+    }
+
+    /// Refuses a model switch, unload or delete while a file job holds the
+    /// model.
+    pub fn ensure_model_unlocked(&self) -> std::result::Result<(), String> {
+        if self.job_active() {
+            return Err("The model can't change while a file is transcribing".to_string());
+        }
+        Ok(())
     }
 
     /// Whether a live streaming run is currently in flight.
@@ -886,12 +978,12 @@ impl TranscriptionManager {
     /// Transcribe a whole clip in batch: a re-transcribed history entry, or
     /// a file from the CLI.
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
-        self.complete(Instant::now(), audio, None)
+        Ok(self.complete(Instant::now(), audio, None)?.text)
     }
 
     /// Transcribe a finished recording: what its live decode produced, or a
     /// batch run of the whole recording when there is no live result.
-    pub fn transcribe_recording(&self, samples: Vec<f32>) -> Result<String> {
+    pub fn transcribe_recording(&self, samples: Vec<f32>) -> Result<Transcription> {
         let started = Instant::now();
         let live = self.finalize_live(samples.len())?;
         self.complete(started, samples, live)
@@ -904,7 +996,7 @@ impl TranscriptionManager {
         started: Instant,
         audio: Vec<f32>,
         live: Option<RunOutcome>,
-    ) -> Result<String> {
+    ) -> Result<Transcription> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -917,7 +1009,10 @@ impl TranscriptionManager {
         if audio.is_empty() {
             debug!("Empty audio vector");
             self.maybe_unload_immediately("empty audio");
-            return Ok(String::new());
+            return Ok(Transcription {
+                text: String::new(),
+                language: None,
+            });
         }
 
         let outcome = match live {
@@ -925,6 +1020,9 @@ impl TranscriptionManager {
             None => self.decode_batch(audio)?,
         };
         let settings = get_settings(&self.app_handle);
+        let language = outcome
+            .setup
+            .spoken_language(outcome.model_detected_language.as_deref());
         let final_result = finish_text(outcome, &settings);
 
         let translation_note = if settings.translate_to_english {
@@ -954,7 +1052,10 @@ impl TranscriptionManager {
 
         self.maybe_unload_immediately("transcription");
 
-        Ok(final_result)
+        Ok(Transcription {
+            text: final_result,
+            language: Some(language),
+        })
     }
 
     /// Decode a whole clip with the loaded model, loading it first if a load
@@ -963,28 +1064,26 @@ impl TranscriptionManager {
         // A cancel from here on (during the model-load wait or chunk planning
         // included) stops every run of this transcription.
         let mark = self.engine.cancel_mark();
-
-        // Update last activity timestamp
         self.touch_activity();
+        let batch = self.batch_context(&audio)?;
+        self.transcribe_cpp(mark, batch, audio)
+    }
 
-        // Check if model is loaded, if not try to load it
+    /// Waits out any model load, then reads what a batch transcription of
+    /// `audio` runs with: the loaded model, the settings, and the language
+    /// resolved for it.
+    fn batch_context(&self, audio: &[f32]) -> Result<BatchContext> {
         {
-            // If the model is loading, wait for it to complete.
             let mut is_loading = self.is_loading.lock().unwrap();
             while *is_loading {
                 is_loading = self.loading_condvar.wait(is_loading).unwrap();
             }
-
-            if !self.is_model_loaded() {
-                return Err(anyhow::anyhow!("Model is not loaded for transcription."));
-            }
         }
+        let Some(info) = self.engine.loaded() else {
+            return Err(anyhow::anyhow!("Model is not loaded for transcription."));
+        };
 
-        // Get current settings for configuration
         let settings = get_settings(&self.app_handle);
-
-        // Validate selected language against the model's supported languages.
-        // If the language isn't supported, fall back to "auto" to prevent errors.
         // Validate against the model that's actually loaded (which can differ
         // from settings.selected_model when a caller loaded a specific model —
         // e.g. the --transcribe-file path's --model), not the persisted
@@ -992,65 +1091,111 @@ impl TranscriptionManager {
         let active_model = self
             .get_current_model()
             .unwrap_or_else(|| settings.selected_model.clone());
-        // Resolve the persisted language *intent* into the language this model
-        // will actually use. The coercion is capability-aware (a must-pick model
-        // never receives "auto") and computed fresh here — it is never written
-        // back to settings, so the intent survives switching models and back.
-        let validated_language =
-            effective_language_for_model(&settings, self.model_manager.as_ref(), &active_model);
-        if validated_language != settings.selected_language {
-            debug!(
-                "Language intent '{}' resolved to '{}' for model '{}'",
-                settings.selected_language, validated_language, active_model
-            );
-        }
-
-        let Some(info) = self.engine.loaded() else {
-            return Err(anyhow::anyhow!(
-                "Model failed to load after auto-load attempt. Please check your model settings."
-            ));
-        };
-        self.transcribe_cpp(
-            mark,
+        let plan = self.language_plan(&settings, &active_model, &info);
+        let setup = self.setup_for(&info, &settings, &plan, audio);
+        Ok(BatchContext {
             info,
-            audio,
-            &settings,
-            &validated_language,
-            &active_model,
+            settings,
+            active_model,
+            setup,
+        })
+    }
+
+    /// How a transcription on `model_id` picks its language, decided before
+    /// any audio. Computed fresh each time and never written back to
+    /// settings, so the persisted intent survives switching models and back.
+    fn language_plan(&self, settings: &AppSettings, model_id: &str, info: &LoadedInfo) -> Plan {
+        let model = self.model_manager.get_model_info(model_id);
+        crate::language_detection::plan_for(
+            settings,
+            model.as_ref(),
+            info.capabilities.supports_streaming,
         )
     }
 
-    /// transcribe-cpp: the model runs in the engine's worker process, which
-    /// recovers from crashes and hangs itself. Long audio is decoded in
-    /// chunks cut at pauses, unless the model handles it in one run.
+    /// Resolves `plan` with the transcription's `audio` into the run setup
+    /// every run of it uses. Detection runs only for a detect plan.
+    fn setup_for(
+        &self,
+        info: &LoadedInfo,
+        settings: &AppSettings,
+        plan: &Plan,
+        audio: &[f32],
+    ) -> RunSetup {
+        // No VAD pass when the detector isn't there to use the speech.
+        let speech = if !plan.detects() {
+            Some(Vec::new())
+        } else if self.model_manager.language_detector_path().is_some() {
+            Some(self.detection_speech(settings, audio))
+        } else {
+            None
+        };
+        let language = plan.decide(speech.as_deref(), |speech, allowed| {
+            let path = self
+                .model_manager
+                .language_detector_path()
+                .ok_or(IdentifyError::Missing)?;
+            self.language_detector
+                .identify(&path, speech, allowed)
+                .map_err(IdentifyError::Failed)
+        });
+        info!(
+            "Transcription language: {} ({:?})",
+            language.intent(),
+            language.source
+        );
+        run_setup(info, settings, language)
+    }
+
+    /// The first window of speech in `audio`: silence is always cut out by
+    /// VAD first, whatever `vad_enabled` says, so the window is all speech.
+    fn detection_speech(&self, settings: &AppSettings, audio: &[f32]) -> Vec<f32> {
+        create_smoothed_detector(settings.vad_backend, &self.app_handle)
+            .and_then(|mut vad| {
+                speech_head(
+                    &mut vad,
+                    audio,
+                    settings.language_detection_window_samples(),
+                )
+            })
+            .unwrap_or_else(|e| {
+                warn!("Language detection: VAD failed: {e:#}");
+                Vec::new()
+            })
+    }
+
     fn transcribe_cpp(
         &self,
         mark: CancelMark,
-        info: LoadedInfo,
+        batch: BatchContext,
         audio: Vec<f32>,
-        settings: &AppSettings,
-        validated_language: &str,
-        active_model: &str,
     ) -> Result<RunOutcome> {
-        let setup = run_setup(&info, settings, validated_language);
-        let whole = |pcm: Vec<f32>| {
-            self.run_batch(mark, pcm, &setup.run_options, active_model)
-                .map_err(engine_error)
-        };
+        let BatchContext {
+            info,
+            settings,
+            active_model,
+            setup,
+        } = batch;
         // `mark` covers every chunk, so a cancel between two stops the rest.
         // A failed chunk fails the whole transcription.
-        let transcripts = match batch_decode(ModelTraits::of(&info), settings.long_form_chunking) {
-            BatchDecode::Chunked => ChunkedDecode::decode_clip(
-                self,
-                mark,
-                setup.run_options.clone(),
-                audio,
-                active_model,
-                settings.vad_backend,
-            )
-            .map_err(engine_error)?,
-            BatchDecode::Whole => vec![whole(audio)?],
-        };
+        let (transcripts, setup) =
+            match batch_decode(ModelTraits::of(&info), settings.long_form_chunking) {
+                BatchDecode::Chunked => ChunkedDecode::decode_clip(
+                    self,
+                    mark,
+                    ChunkSetup::Ready(Box::new(setup)),
+                    audio,
+                    &active_model,
+                    settings.vad_backend,
+                )
+                .map_err(engine_error)?,
+                BatchDecode::Whole => {
+                    let transcript = self
+                        .run_batch(mark, audio, &setup.run_options, &active_model)
+                        .map_err(engine_error)?;
+                    (vec![transcript], setup)
+                }
+            };
         let (text, model_detected_language) = join_chunks(transcripts);
         Ok(RunOutcome {
             setup,
@@ -1077,7 +1222,30 @@ impl TranscriptionManager {
                     self.forget_model_if_engine_dropped(active_model, &e.to_string());
                 }
             })
+            .map(|mut transcript| {
+                if echoes_vocabulary(&transcript.text, &run_options.vocabulary) {
+                    info!("The model returned the custom words, not speech; dropping them");
+                    transcript.text.clear();
+                }
+                transcript
+            })
     }
+}
+
+/// What a batch transcription runs with, read once before its first run.
+struct BatchContext {
+    info: LoadedInfo,
+    settings: AppSettings,
+    active_model: String,
+    setup: RunSetup,
+}
+
+/// A finished transcription.
+pub struct Transcription {
+    pub text: String,
+    /// The language it ran in and how that was chosen; `None` when there was
+    /// no audio to run.
+    pub language: Option<LanguageDecision>,
 }
 
 /// What one transcription decoded (live or in batch), with how its runs were
@@ -1113,6 +1281,8 @@ fn finish_text(outcome: RunOutcome, settings: &AppSettings) -> String {
 /// configured on the loaded model, and what post-processing needs to know.
 struct RunSetup {
     run_options: RunOptions,
+    /// The language every run uses, and how it was chosen.
+    language: LanguageDecision,
     languages: Vec<String>,
     applied_language_hint: Option<String>,
     output_was_translated: bool,
@@ -1122,6 +1292,18 @@ impl RunSetup {
     /// Custom words went to the model as vocabulary; skip fuzzy correction.
     fn custom_words_prompted(&self) -> bool {
         !self.run_options.vocabulary.is_empty()
+    }
+
+    /// The language the runs were in. When the model decided, the language
+    /// it reported (if any).
+    fn spoken_language(&self, model_detected_language: Option<&str>) -> LanguageDecision {
+        let mut decision = self.language.clone();
+        if decision.language.is_none() {
+            decision.language = model_detected_language
+                .filter(|language| !language.is_empty() && *language != "auto")
+                .map(str::to_string);
+        }
+        decision
     }
 
     /// What the output language is known to be, given the model's own
@@ -1135,6 +1317,7 @@ impl RunSetup {
             resolve_output_language_evidence(
                 settings,
                 self.applied_language_hint.as_deref(),
+                self.language.source == LanguageSource::Detected,
                 &self.languages,
                 self.output_was_translated,
             ),
@@ -1146,7 +1329,7 @@ impl RunSetup {
 /// The loaded model's live capabilities (cheap GGUF-metadata reads) are the
 /// source of truth, not the ModelManager copy; translate is gated on what the
 /// model advertises.
-fn run_setup(info: &LoadedInfo, settings: &AppSettings, validated_language: &str) -> RunSetup {
+fn run_setup(info: &LoadedInfo, settings: &AppSettings, language: LanguageDecision) -> RunSetup {
     let model_supports_translate = info.capabilities.supports_translate;
     let languages = info.capabilities.languages.clone();
     debug!(
@@ -1161,12 +1344,34 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, validated_language: &str
 
     let run_plan = transcribe_cpp_run_plan(
         settings.translate_to_english,
-        validated_language,
+        language.intent(),
         &languages,
         model_supports_translate,
     );
     let output_was_translated = run_plan.target_language.as_deref() == Some("en");
     let applied_language_hint = run_plan.language.clone();
+    if applied_language_hint.is_none()
+        && matches!(
+            language.source,
+            LanguageSource::Detected | LanguageSource::Fallback
+        )
+    {
+        if let Some(chosen) = &language.language {
+            warn!(
+                "Language '{}' isn't one the loaded model advertises ({:?}); it runs without a language",
+                chosen, languages
+            );
+        }
+    }
+    // The model wasn't told a language, so record what it reports instead.
+    let language = if applied_language_hint.is_none() && language.language.is_some() {
+        LanguageDecision {
+            language: None,
+            source: LanguageSource::Model,
+        }
+    } else {
+        language
+    };
 
     let run_options = RunOptions {
         task: run_plan.task,
@@ -1185,6 +1390,7 @@ fn run_setup(info: &LoadedInfo, settings: &AppSettings, validated_language: &str
 
     RunSetup {
         run_options,
+        language,
         languages,
         applied_language_hint,
         output_was_translated,
@@ -1204,11 +1410,7 @@ fn engine_error(e: EngineError) -> anyhow::Error {
 /// language hint was passed). Chunks that disagree leave it unknown. A single
 /// transcript passes through untouched.
 fn join_chunks(transcripts: Vec<Transcript>) -> (String, Option<String>) {
-    let mut detected = transcripts.iter().map(|t| t.language.clone());
-    let language = detected
-        .next()
-        .flatten()
-        .filter(|first| detected.all(|language| language.as_ref() == Some(first)));
+    let language = agreed_language(&transcripts);
     let text = match <[Transcript; 1]>::try_from(transcripts) {
         Ok([one]) => one.text,
         Err(many) => {
@@ -1216,6 +1418,15 @@ fn join_chunks(transcripts: Vec<Transcript>) -> (String, Option<String>) {
         }
     };
     (text, language)
+}
+
+/// The language every chunk's model reported, if they all agree.
+fn agreed_language(transcripts: &[Transcript]) -> Option<String> {
+    let mut detected = transcripts.iter().map(|t| t.language.clone());
+    detected
+        .next()
+        .flatten()
+        .filter(|first| detected.all(|language| language.as_ref() == Some(first)))
 }
 
 fn emit_stream_text(app_handle: &AppHandle, committed: &str, tentative: &str) {
@@ -1338,29 +1549,13 @@ fn real_time_factor(audio_secs: f64, compute_secs: f64) -> f64 {
     }
 }
 
-/// Resolve the persisted language intent into the language a specific model can
-/// use without writing the coerced value back to settings.
-fn effective_language_for_model(
-    settings: &AppSettings,
-    model_manager: &ModelManager,
-    model_id: &str,
-) -> String {
-    match model_manager.get_model_info(model_id) {
-        Some(info) => crate::managers::model::effective_language(
-            &settings.selected_language,
-            &info.supported_languages,
-            info.supports_language_detection,
-        ),
-        None => settings.selected_language.clone(),
-    }
-}
-
 /// Resolve how confidently Handy knows the language of the text produced by a
 /// transcription run. The UI language is deliberately not part of this
 /// decision.
 fn resolve_output_language_evidence(
     settings: &AppSettings,
     applied_language_hint: Option<&str>,
+    detected: bool,
     supported_languages: &[String],
     translated_to_english: bool,
 ) -> OutputLanguageEvidence {
@@ -1374,6 +1569,9 @@ fn resolve_output_language_evidence(
     // drops a requested hint when the loaded model does not advertise it.
     if let Some(language) = applied_language_hint.filter(|lang| !lang.is_empty() && *lang != "auto")
     {
+        if detected {
+            return OutputLanguageEvidence::Detected(language.to_string());
+        }
         if settings.selected_language != "auto"
             && crate::managers::model::canonical_language_code(&settings.selected_language)
                 == crate::managers::model::canonical_language_code(language)
@@ -1423,6 +1621,34 @@ fn vocabulary_for_model(supports_vocabulary: bool, custom_words: &[String]) -> V
     }
 }
 
+/// Whether `text` is the custom words read back instead of a transcript. A
+/// model that takes them as a prompt can answer audio with no speech in it by
+/// repeating the list, or the end of it, in order.
+fn echoes_vocabulary(text: &str, vocabulary: &[String]) -> bool {
+    let words = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let said = words(text);
+    // Walk the text once, finding the custom words in the order of the list.
+    let (mut at, mut found, mut covered) = (0, 0, 0);
+    for term in vocabulary.iter().map(|term| words(term)) {
+        if term.is_empty() {
+            continue;
+        }
+        if let Some(offset) = said[at..].windows(term.len()).position(|w| w == term) {
+            at += offset + term.len();
+            found += 1;
+            covered += term.len();
+        }
+    }
+    // A sentence that uses a few custom words is speech. Three or more of
+    // them in list order, with next to nothing else, is the list.
+    found >= 3 && covered * 4 >= said.len() * 3
+}
+
 struct TranscribeCppRunPlan {
     task: Task,
     language: Option<String>,
@@ -1466,17 +1692,14 @@ fn post_process_transcription_text(
     output_language: &OutputLanguageEvidence,
     supported_languages: &[String],
 ) -> String {
-    let converts_script = settings.chinese_script != ChineseScript::AsTranscribed;
     fail_open_text_transform(raw, |raw| {
         // Last-resort language evidence: confidence-gated detection from the
         // transcribed text itself, constrained to the model's languages. Only
-        // consulted when it can change the outcome (built-in gated fillers or
-        // Chinese script conversion).
+        // consulted when it can change the outcome (built-in gated fillers).
         let output_language = match output_language {
             OutputLanguageEvidence::Unknown
-                if converts_script
-                    || (settings.filler_word_removal_enabled
-                        && settings.custom_filler_words.is_none()) =>
+                if settings.filler_word_removal_enabled
+                    && settings.custom_filler_words.is_none() =>
             {
                 match detect_output_language(&raw, supported_languages) {
                     Some(language) => {
@@ -1490,16 +1713,11 @@ fn post_process_transcription_text(
         };
 
         // Convert the script before custom words so they match in the script
-        // the user writes in. Only output known to be Chinese is touched, so
-        // e.g. Japanese kanji are never rewritten.
-        let variety = output_language
-            .language()
-            .and_then(ChineseVariety::from_language);
-        let raw = match variety {
-            Some(variety) if converts_script => {
-                convert_chinese_script(&raw, variety, settings.chinese_script)
-            }
-            _ => raw,
+        // the user writes in. Decided from the text, since mixed Mandarin/English
+        // is often detected as English; Japanese is never rewritten.
+        let raw = match chinese_variety_for_text(&raw, &output_language) {
+            Some(variety) => convert_chinese_script(&raw, variety, settings.chinese_script),
+            None => raw,
         };
 
         let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
@@ -1519,60 +1737,36 @@ fn post_process_transcription_text(
             settings.filler_word_removal_enabled,
         );
 
-        normalize_transcription_output(&without_fillers)
+        let text = normalize_transcription_output(&without_fillers);
+        // Short, wordless clips often come back as just "." or "?".
+        if text.chars().any(char::is_alphanumeric) {
+            text
+        } else {
+            String::new()
+        }
     })
 }
 
-/// Characters to wait for before detecting the preview's language. A lone
-/// Chinese character reads as Mandarin, but Japanese often opens with kanji
-/// before any kana; waiting a few characters keeps those from locking in.
-const PREVIEW_DETECTION_MIN_CHARS: usize = 6;
-
-/// Converts live-preview text into the configured Chinese script as it streams.
-///
-/// The preview is cosmetic: the final paste re-resolves the language and
-/// converts on its own, so this only has to look right while speaking.
+/// Converts live-preview text into the configured Chinese script as it
+/// streams, by the same rule as the final paste so the two agree.
 struct PreviewScript {
     script: ChineseScript,
-    variety: Option<ChineseVariety>,
-    /// The language wasn't known when the stream started (auto-detect), so it
-    /// is detected from the streamed text until it turns out to be Chinese.
-    detect: bool,
+    output_language: OutputLanguageEvidence,
 }
 
 impl PreviewScript {
     fn new(script: ChineseScript, output_language: &OutputLanguageEvidence) -> Self {
-        let enabled = script != ChineseScript::AsTranscribed;
         Self {
             script,
-            variety: output_language
-                .language()
-                .and_then(ChineseVariety::from_language)
-                .filter(|_| enabled),
-            detect: enabled && *output_language == OutputLanguageEvidence::Unknown,
+            output_language: output_language.clone(),
         }
     }
 
     /// Converts the model's raw committed/tentative text. Always fed the raw
-    /// text, never a previous conversion, so it stays consistent with the
-    /// final conversion. Once Chinese is detected it sticks for the rest of
-    /// the stream so the preview doesn't flip back and forth.
-    fn convert(
-        &mut self,
-        committed: &str,
-        tentative: &str,
-        supported_languages: &[String],
-    ) -> (String, String) {
-        if self.variety.is_none() && self.detect {
-            let text = format!("{committed}{tentative}");
-            if text.chars().count() >= PREVIEW_DETECTION_MIN_CHARS {
-                self.variety = detect_output_language(&text, supported_languages)
-                    .as_deref()
-                    .and_then(ChineseVariety::from_language);
-            }
-        }
-
-        match self.variety {
+    /// text, never a previous conversion.
+    fn convert(&self, committed: &str, tentative: &str) -> (String, String) {
+        let text = format!("{committed}{tentative}");
+        match chinese_variety_for_text(&text, &self.output_language) {
             Some(variety) => (
                 convert_chinese_script(committed, variety, self.script),
                 convert_chinese_script(tentative, variety, self.script),
@@ -1871,7 +2065,7 @@ mod tests {
     #[test]
     fn non_chinese_output_is_never_converted() {
         let settings = AppSettings {
-            chinese_script: ChineseScript::Traditional,
+            chinese_script: ChineseScript::TraditionalTw,
             ..Default::default()
         };
         for evidence in [
@@ -1889,6 +2083,44 @@ mod tests {
 
             assert_eq!(result, "学校に行きます", "{evidence:?}");
         }
+    }
+
+    #[test]
+    fn mixed_chinese_english_detected_as_english_is_converted() {
+        // #2239: Whisper tags mixed Mandarin/English runs as English.
+        let settings = AppSettings {
+            chinese_script: ChineseScript::TraditionalTw,
+            filler_word_removal_enabled: false,
+            ..Default::default()
+        };
+        let result = post_process_transcription_text(
+            "欸我跟你说，我今天早上本来想要去咖啡厅工作，结果一打开电脑就发现，Oh my god, I forgot to charge my laptop last night.".to_string(),
+            &settings,
+            false,
+            &OutputLanguageEvidence::ModelDetected("en".to_string()),
+            &languages(&["zh", "en", "ja"]),
+        );
+
+        assert_eq!(
+            result,
+            "欸我跟你說，我今天早上本來想要去咖啡廳工作，結果一打開電腦就發現，Oh my god, I forgot to charge my laptop last night."
+        );
+    }
+
+    #[test]
+    fn preview_converts_mixed_text_but_not_japanese() {
+        let preview = PreviewScript::new(
+            ChineseScript::TraditionalTw,
+            &OutputLanguageEvidence::Unknown,
+        );
+        assert_eq!(
+            preview.convert("我跟你说，", "I forgot my laptop"),
+            ("我跟你說，".to_string(), "I forgot my laptop".to_string())
+        );
+        assert_eq!(
+            preview.convert("学校に", "行きます"),
+            ("学校に".to_string(), "行きます".to_string())
+        );
     }
 
     #[test]
@@ -1917,7 +2149,8 @@ mod tests {
             ..Default::default()
         };
         let supported = languages(&["en", "pt"]);
-        let evidence = resolve_output_language_evidence(&settings, Some("pt"), &supported, false);
+        let evidence =
+            resolve_output_language_evidence(&settings, Some("pt"), false, &supported, false);
 
         let result = post_process_transcription_text(
             "eu vi um carro".to_string(),
@@ -1941,8 +2174,13 @@ mod tests {
             ..Default::default()
         };
 
-        let evidence =
-            resolve_output_language_evidence(&settings, Some("nb"), &languages(&["nb"]), false);
+        let evidence = resolve_output_language_evidence(
+            &settings,
+            Some("nb"),
+            false,
+            &languages(&["nb"]),
+            false,
+        );
 
         assert_eq!(
             evidence,
@@ -1956,8 +2194,13 @@ mod tests {
             selected_language: "auto".to_string(),
             ..Default::default()
         };
-        let evidence =
-            resolve_output_language_evidence(&settings, None, &languages(&["en", "pt"]), false);
+        let evidence = resolve_output_language_evidence(
+            &settings,
+            None,
+            false,
+            &languages(&["en", "pt"]),
+            false,
+        );
 
         // Too short for a reliable text detection, so the gated "um" must
         // survive; the universal "uhm" is removed regardless.
@@ -2047,7 +2290,7 @@ mod tests {
         };
 
         let evidence =
-            resolve_output_language_evidence(&settings, None, &languages(&["en"]), false);
+            resolve_output_language_evidence(&settings, None, false, &languages(&["en"]), false);
 
         assert_eq!(
             evidence,
@@ -2065,6 +2308,7 @@ mod tests {
         let evidence = resolve_output_language_evidence(
             &settings,
             Some("en"),
+            false,
             &languages(&["en", "de"]),
             false,
         );
@@ -2085,7 +2329,7 @@ mod tests {
         };
         let supported = languages(&["en", "de", "pt"]);
 
-        let evidence = resolve_output_language_evidence(&settings, None, &supported, false);
+        let evidence = resolve_output_language_evidence(&settings, None, false, &supported, false);
         assert_eq!(evidence, OutputLanguageEvidence::Unknown);
 
         let result = post_process_transcription_text(
@@ -2112,6 +2356,7 @@ mod tests {
             resolve_output_language_evidence(
                 &settings,
                 plan.language.as_deref(),
+                false,
                 &supported,
                 false,
             ),
@@ -2129,6 +2374,7 @@ mod tests {
         let evidence = resolve_output_language_evidence(
             &settings,
             Some("pt"),
+            false,
             &languages(&["en", "pt"]),
             true,
         );
@@ -2192,6 +2438,46 @@ mod tests {
             &supported,
         );
         assert_eq!(corrected, "i use Handy every day");
+    }
+
+    #[test]
+    fn custom_words_read_back_are_not_a_transcript() {
+        let words = [
+            "Handy",
+            "Qwen",
+            "VRAM",
+            "Claude",
+            "Opus",
+            "Codex",
+            "GPT-6.1 Sol",
+        ]
+        .map(String::from);
+
+        // The shapes Qwen3-ASR returned for recordings of room noise (#2498).
+        for echo in [
+            "Handy Qwen VRAM Claude Opus Codex GPT-6.1 Sol.",
+            "手 Handy Qwen VRAM Claude Opus Codex GPT-6.1 Sol.",
+            // Only the end of the list, as with a long one.
+            "Claude Opus Codex GPT-6.1 Sol",
+            // With a word of its own in front.
+            "Ich bin ein Handy Qwen VRAM Claude Opus Codex GPT-6.1 Sol",
+        ] {
+            assert!(echoes_vocabulary(echo, &words), "{echo}");
+        }
+
+        for speech in [
+            "",
+            "Okay.",
+            "I asked Claude to compare Opus and Codex on my Handy fork.",
+            // Too few of them to tell from someone saying them.
+            "Claude Opus",
+            "GPT-6.1 Sol",
+            // Not the order of the list.
+            "Codex, Opus, Claude",
+        ] {
+            assert!(!echoes_vocabulary(speech, &words), "{speech}");
+        }
+        assert!(!echoes_vocabulary("Handy Qwen VRAM", &[]));
     }
 }
 

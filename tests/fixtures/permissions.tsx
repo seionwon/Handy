@@ -3,8 +3,8 @@ import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import i18next from "i18next";
 import { I18nextProvider } from "react-i18next";
-import AccessibilityOnboarding from "../../src/components/onboarding/AccessibilityOnboarding";
-import AccessibilityPermissions from "../../src/components/AccessibilityPermissions";
+import "../../src/App.css";
+import { ReturningPermissions } from "../../src/components/onboarding/StandaloneScreens";
 import translations from "../../src/i18n/locales/en/translation.json";
 
 const query = new URLSearchParams(location.search);
@@ -65,16 +65,12 @@ state.unmount = () => root.unmount();
 root.render(
   <React.StrictMode>
     <I18nextProvider i18n={i18n}>
-      {query.has("legacy") ? (
-        <AccessibilityPermissions />
-      ) : (
-        <AccessibilityOnboarding
-          preview={query.has("preview")}
-          onComplete={() => {
-            state.completed++;
-          }}
-        />
-      )}
+      <ReturningPermissions
+        preview={query.has("preview")}
+        onComplete={() => {
+          state.completed++;
+        }}
+      />
     </I18nextProvider>
   </React.StrictMode>,
 );

@@ -106,6 +106,8 @@ impl HandyKeysState {
         });
 
         // Never publish an unusable state or wait indefinitely for an OS API.
+        // Startup failures (e.g. missing Accessibility permission) propagate
+        // back to the caller so it can fall back to the Tauri implementation.
         manager_response(ready_rx)??;
 
         Ok(Self {
@@ -141,7 +143,6 @@ impl HandyKeysState {
         if ready.send(Ok(())).is_err() {
             return;
         }
-
         // Maps binding IDs to HotkeyIds and hotkey strings
         let mut binding_to_hotkey: HashMap<String, HotkeyId> = HashMap::new();
         let mut hotkey_to_binding: HashMap<HotkeyId, (String, String)> = HashMap::new(); // (binding_id, hotkey_string)

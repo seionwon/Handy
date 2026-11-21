@@ -14,13 +14,14 @@ use super::{ClipboardTarget, PasteMode, ScreenSharingTarget};
 use crate::clipboard::send_return_key;
 use crate::input::{self, EnigoState};
 use crate::managers::audio::AudioRecordingManager;
+use crate::notices::{self, Notice, NoticeCode, NoticeSource};
 use crate::settings::{AppSettings, AutoSubmitKey, ClipboardHandling, PasteMethod};
 use log::{error, info, warn};
 use objc2_app_kit::{NSPasteboard, NSWorkspace};
 use std::cell::RefCell;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const FOCUS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -322,7 +323,10 @@ fn tick(id: u64, app: &AppHandle) -> bool {
             outcome => {
                 if let Err(error) = &outcome {
                     error!("Failed to paste transcription: {error}");
-                    let _ = app.emit("paste-error", ());
+                    notices::raise(
+                        app,
+                        Notice::new(NoticeCode::PasteFailed, NoticeSource::Dictation),
+                    );
                 }
                 if let Some(pending) = slot.take() {
                     pending.finish(app, outcome.is_ok());

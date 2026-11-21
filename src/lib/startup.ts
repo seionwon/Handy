@@ -60,12 +60,12 @@ export async function checkStartup({
   const migrationModelId =
     retired.find((model) => model.id === settings.data.selected_model)?.id ??
     null;
-  const step = !permissionsGranted
-    ? ("accessibility" as const)
-    : !isReturningUser
-      ? ("model" as const)
+  const step = !isReturningUser
+    ? ("flow" as const)
+    : !permissionsGranted
+      ? ("permissions" as const)
       : migrationModelId
         ? ("migration" as const)
         : ("done" as const);
-  return { isReturningUser, migrationModelId, step };
+  return { isReturningUser, migrationModelId, permissionsGranted, step };
 }
