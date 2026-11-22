@@ -1,6 +1,6 @@
 # Handy — Mac 화면 공유 음성 입력
 
-[English README](README.md) · [빌드 안내](BUILD.md) · [설치 안내](packaging/macos/INSTALL-KO.txt) · [원본 프로젝트](https://github.com/cjpais/Handy)
+[GitHub 릴리스에서 설치 파일 다운로드](https://github.com/seionwon/Handy/releases) · [English README](README.md) · [빌드 안내](BUILD.md) · [설치 안내](packaging/macos/INSTALL-KO.txt) · [원본 프로젝트](https://github.com/cjpais/Handy)
 
 > [!IMPORTANT]
 > **0.9.15는 화면 공유 앱을 계속 맨 앞으로 유지하고 `Use Shared Clipboard`도 ON으로 유지합니다.** 보이지 않고 마우스 입력을 받지 않는 패널로 창 포커스만 잠깐 갱신한 뒤 같은 원격 창에 붙여넣습니다.

@@ -1,6 +1,6 @@
 # Handy
 
-[한국어 사용 안내](README.ko.md) · [Screen Sharing setup](#mac-to-mac-dictation-over-screen-sharing-vnc) · [Build instructions](BUILD.md)
+[Download installers on GitHub Releases](https://github.com/seionwon/Handy/releases) · [한국어 사용 안내](README.ko.md) · [Screen Sharing setup](#mac-to-mac-dictation-over-screen-sharing-vnc) · [Build instructions](BUILD.md)
 
 > [!IMPORTANT]
 > **0.9.15 keeps Screen Sharing in front while `Edit → Use Shared Clipboard` stays ON throughout.** An invisible, nonactivating, mouse-transparent panel briefly borrows window key focus, publishes fresh text, and releases focus back to the same session before `Cmd+V`.
