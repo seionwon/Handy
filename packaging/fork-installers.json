@@ -1,0 +1,34 @@
+{
+  "version": "0.10.4-seionwon",
+  "title": "Handy 설치 파일 · Android 0.10.4-seionwon · macOS 및 Windows 0.10.2-seionwon",
+  "assets": [
+    {
+      "device": "Android 8.0+ · ARM64 / x86_64",
+      "label": "Android APK",
+      "version": "0.10.4-seionwon",
+      "file": "Handy-v0.10.4-seionwon.apk",
+      "sha256": "71891b2fd7490663a014476f4be47c340a06b3fb47a5bb60f796880ef48ec86e"
+    },
+    {
+      "device": "macOS · Apple Silicon (M 시리즈)",
+      "label": "macOS PKG",
+      "version": "0.10.2-seionwon",
+      "file": "Handy-ScreenSharing-0.10.2-seionwon-arm64.pkg",
+      "sha256": "ae81e577d074d4e5f5afe62f00da9c07bd81e3be038d8044da06fba96414df91"
+    },
+    {
+      "device": "Windows x64 · 일반 설치",
+      "label": "Windows EXE",
+      "version": "0.10.2-seionwon",
+      "file": "Handy_0.10.2-seionwon_x64-setup.exe",
+      "sha256": "56b6736e3c410273aefe685d6f6e65ac4ad9edd9d9e5fed590ea0a8644164dc0"
+    },
+    {
+      "device": "Windows x64 · MSI 설치가 필요한 경우",
+      "label": "Windows MSI",
+      "version": "0.10.2-seionwon",
+      "file": "Handy_0.10.2-seionwon_x64_en-US.msi",
+      "sha256": "218b36e4b59cb524a2bef9f096cf3817971ff4c11227cf4871052fffec809ec3"
+    }
+  ]
+}

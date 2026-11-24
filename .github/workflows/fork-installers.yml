@@ -1,0 +1,24 @@
+name: Publish fork installers
+
+on:
+  push:
+    tags: ["installers-*-seionwon"]
+
+concurrency:
+  group: fork-installer-homepage
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'seionwon/Handy' && !github.event.deleted
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Publish the files and update the repository homepage
+        run: python3 scripts/fork_installers.py publish
+        env:
+          GH_TOKEN: ${{ github.token }}
