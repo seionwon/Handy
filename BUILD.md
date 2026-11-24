@@ -106,7 +106,7 @@ This compiles a release binary and generates platform-specific bundles (deb, rpm
 
 ### Publish existing installers to the fork
 
-The download table on the `seionwon/Handy` repository homepage links directly to its release files. To publish a new set, list the built installers, their versions and their SHA-256 checksums in `packaging/fork-installers.json`. Keep the installers at the project root and give the new set its own version.
+The download table on the `seionwon/Handy` repository homepage links directly to its release files. Edit the fork overview in `.github/README.md`. Publishing updates only the table between the `installer-downloads:start` and `installer-downloads:end` comments. To publish a new set, list the built installers, their versions and their SHA-256 checksums in `packaging/fork-installers.json`. Keep the installers at the project root and give the new set its own version.
 
 Run `python3 scripts/fork_installers.py push` with Python 3.11 or later. It prepares a separate installer tag and pushes that tag to the fork using the project's Git connection. Use `prepare` to check the files and preview the homepage locally. The fork's GitHub Actions workflow publishes the attached files, verifies the public downloads and updates the homepage for the latest release.
 

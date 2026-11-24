@@ -18,7 +18,9 @@ WEB = f"https://github.com/{REPO}"
 MANIFEST = "packaging/fork-installers.json"
 WORKFLOW = ".github/workflows/fork-installers.yml"
 HOME_PAGE = ".github/README.md"
-MARKER = "<!-- Handy fork installer downloads -->"
+LEGACY_PAGE_MARKER = "<!-- Handy fork installer downloads -->"
+DOWNLOADS_START = "<!-- installer-downloads:start -->"
+DOWNLOADS_END = "<!-- installer-downloads:end -->"
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+-seionwon"
 
 
@@ -41,26 +43,25 @@ def load_release():
     return release
 
 
-def homepage(release, tag):
+def homepage(release, tag, page):
+    if page.count(DOWNLOADS_START) != 1 or page.count(DOWNLOADS_END) != 1:
+        raise ValueError(f"Expected one download section in {HOME_PAGE}.")
+    intro, _, section = page.partition(DOWNLOADS_START)
+    _, end, footer = section.partition(DOWNLOADS_END)
+    if not end:
+        raise ValueError(f"Download section markers are out of order in {HOME_PAGE}.")
     rows = [
-        MARKER, "# Handy · 설치 파일 다운로드", "",
-        "기기에 맞는 파일 하나를 선택하세요. Choose the installer for your device.", "",
         "| 기기 / Device | 버전 / Version | 다운로드 / Download |",
         "| --- | --- | --- |",
     ]
     for asset in release["assets"]:
         link = f"{WEB}/releases/download/{tag}/{asset['file']}"
         rows.append(f"| {asset['device']} | {asset['version']} | **[{asset['label']}]({link})** |")
-    rows.extend(["", f"[전체 릴리스 / All releases]({WEB}/releases) · "
-                 f"[한국어 사용 안내]({WEB}/blob/HEAD/README.ko.md) · "
-                 f"[English guide]({WEB}/blob/HEAD/README.md)", ""])
-    return "\n".join(rows)
+    return intro + DOWNLOADS_START + "\n\n" + "\n".join(rows) + "\n\n" + end + footer
 
 
 def prepare(release, tag, page):
     local_homepage = ROOT / HOME_PAGE
-    if local_homepage.exists() and not local_homepage.read_text().startswith(MARKER):
-        raise ValueError(f"An existing hand-written homepage needs to be preserved: {HOME_PAGE}")
     # An independent index keeps the source checkout, its index and any other
     # in-progress changes out of the distribution tag.
     with tempfile.TemporaryDirectory(prefix="handy-git-index-") as temp:
@@ -90,18 +91,38 @@ def prepare(release, tag, page):
     if existing.returncode == 1:
         commit = command("git", "commit-tree", tree, "-m", f"chore(release): distribute {tag}")
         command("git", "update-ref", ref, commit, "")
-    elif existing.returncode != 0 or existing.stdout.strip() != tree:
-        raise ValueError(f"The existing tag differs from these files: {tag}")
-    local_homepage.write_text(page)
+    else:
+        existing.check_returncode()
+        # Documentation edits may follow a release. Keep every other path in
+        # the installer snapshot identical, including its set of files.
+        payload = subprocess.run(["git", "diff", "--quiet", existing.stdout.strip(), tree,
+                                  "--", ".", f":(exclude){HOME_PAGE}",
+                                  ":(exclude)scripts/fork_installers.py"], cwd=ROOT)
+        if payload.returncode == 1:
+            raise ValueError(f"The existing tag differs from this installer snapshot: {tag}")
+        payload.check_returncode()
+    current_page = local_homepage.read_text()
+    preview = homepage(release, tag, current_page)
+    if preview != current_page:
+        local_homepage.write_text(preview)
     print(f"Verified {len(release['assets'])} installers and prepared {ref}")
+    return tree
 
 
-def push_tag(tag):
+def push_tag(tag, prepared_tree):
     targets = command("git", "remote", "get-url", "--push", "--all", "origin").splitlines()
     github = r"(?:https://(?:[^/@]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)"
     if not targets or not all(re.fullmatch(github + REPO + r"(?:\.git)?/?", url, re.I) for url in targets):
         raise ValueError(f"The push destination of origin must be {REPO}.")
     ref = "refs/tags/" + tag
+    if command("git", "rev-parse", f"{ref}^{{tree}}") != prepared_tree:
+        # A retry can refer to the old homepage already on GitHub. Never
+        # upload a different local publisher or move an existing tag.
+        remote = command("git", "ls-remote", "--refs", "origin", ref)
+        if remote != command("git", "rev-parse", ref) + "\t" + ref:
+            raise ValueError(f"The local tag has different publishing files. Use a new tag: {tag}")
+        print(f"{ref} is already on origin.")
+        return
     subprocess.run(["git", "push", "origin", f"{ref}:{ref}"], cwd=ROOT, check=True)
 
 
@@ -193,14 +214,15 @@ def publish(release, tag, page):
         return
     endpoint = f"contents/{HOME_PAGE}"
     current = api(endpoint, optional=True)
-    update = {"message": f"docs: show downloads for {tag}", "content": base64.b64encode(page.encode()).decode()}
+    update = {"message": f"docs: show downloads for {tag}"}
     if current:
         old_page = base64.b64decode(current["content"]).decode()
+        if not old_page.startswith(LEGACY_PAGE_MARKER):
+            page = homepage(release, tag, old_page)
         if old_page == page:
             return
-        if not old_page.startswith(MARKER):
-            raise ValueError(f"Preserve the existing hand-written {HOME_PAGE} before publishing.")
         update["sha"] = current["sha"]
+    update["content"] = base64.b64encode(page.encode()).decode()
     api(endpoint, method="PUT", payload=update)
 
 
@@ -210,10 +232,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     release = load_release()
     tag = "installers-" + release["version"]
-    page = homepage(release, tag)
+    page = homepage(release, tag, (ROOT / HOME_PAGE).read_text())
     if args.action == "publish":
         publish(release, tag, page)
     else:
-        prepare(release, tag, page)
+        tree = prepare(release, tag, page)
         if args.action == "push":
-            push_tag(tag)
+            push_tag(tag, tree)
