@@ -4,7 +4,6 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
 use std::collections::HashMap;
-use std::fmt;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
@@ -361,35 +360,6 @@ pub enum LanguageDetectionMode {
     Always,
 }
 
-#[derive(Clone, Serialize, Deserialize, Type)]
-#[serde(transparent)]
-pub(crate) struct SecretMap(HashMap<String, String>);
-
-impl fmt::Debug for SecretMap {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let redacted: HashMap<&String, &str> = self
-            .0
-            .iter()
-            .map(|(k, v)| (k, if v.is_empty() { "" } else { "[REDACTED]" }))
-            .collect();
-        redacted.fmt(f)
-    }
-}
-
-impl std::ops::Deref for SecretMap {
-    type Target = HashMap<String, String>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for SecretMap {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-/* still handy for composing the initial JSON in the store ------------- */
 /// The container-level `serde(default)` (backed by the `Default` impl below)
 /// guarantees every field — including ones added in the future — falls back to
 /// its `get_default_settings()` value when missing from a stored settings
@@ -489,8 +459,6 @@ pub struct AppSettings {
     pub post_process_provider_id: String,
     #[serde(default = "default_post_process_providers")]
     pub post_process_providers: Vec<PostProcessProvider>,
-    #[serde(default = "default_post_process_api_keys")]
-    pub post_process_api_keys: SecretMap,
     #[serde(default = "default_post_process_models")]
     pub post_process_models: HashMap<String, String>,
     #[serde(default = "default_post_process_prompts")]
@@ -828,14 +796,6 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
     providers
 }
 
-fn default_post_process_api_keys() -> SecretMap {
-    let mut map = HashMap::new();
-    for provider in default_post_process_providers() {
-        map.insert(provider.id, String::new());
-    }
-    SecretMap(map)
-}
-
 fn default_model_for_provider(provider_id: &str) -> String {
     if provider_id == APPLE_INTELLIGENCE_PROVIDER_ID {
         return APPLE_INTELLIGENCE_DEFAULT_MODEL_ID.to_string();
@@ -925,13 +885,6 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                 settings.post_process_providers.push(provider.clone());
                 changed = true;
             }
-        }
-
-        if !settings.post_process_api_keys.contains_key(&provider.id) {
-            settings
-                .post_process_api_keys
-                .insert(provider.id.clone(), String::new());
-            changed = true;
         }
 
         let default_model = default_model_for_provider(&provider.id);
@@ -1046,7 +999,6 @@ pub fn get_default_settings() -> AppSettings {
         post_process_enabled: default_post_process_enabled(),
         post_process_provider_id: default_post_process_provider_id(),
         post_process_providers: default_post_process_providers(),
-        post_process_api_keys: default_post_process_api_keys(),
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
@@ -1120,10 +1072,13 @@ impl AppSettings {
 
 /// Startup entry point. Same load-or-create/salvage/migrate behavior as
 /// `get_settings`; kept as a named alias for call-site clarity, plus a
-/// one-time debug dump of the loaded settings.
+/// one-time log of the settings schema version.
 pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
     let settings = get_settings(app);
-    debug!("Loaded settings: {:?}", settings);
+    debug!(
+        "Loaded settings schema version {}",
+        settings.settings_schema_version
+    );
     settings
 }
 
@@ -1144,6 +1099,39 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
                 }
             };
 
+        // An old custom endpoint cannot establish which server originally issued its key.
+        if let Some(keys) = settings_value.get("post_process_api_keys") {
+            if let Some(keys) = keys.as_object() {
+                for provider in default_post_process_providers() {
+                    let Some(key) = keys
+                        .get(&provider.id)
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    else {
+                        continue;
+                    };
+                    if provider.id == "custom"
+                        || !settings
+                            .post_process_provider(&provider.id)
+                            .is_some_and(|p| p.base_url == provider.base_url)
+                    {
+                        continue;
+                    }
+                    let migrated =
+                        crate::provider_credentials::read(&provider).and_then(|existing| {
+                            if existing.is_some() {
+                                Ok(())
+                            } else {
+                                crate::provider_credentials::write(&provider, key)
+                            }
+                        });
+                    if migrated.is_err() {
+                        warn!("Re-enter the {} API key in secure storage", provider.label);
+                    }
+                }
+            }
+            updated = true;
+        }
         if apply_settings_migrations(&mut settings, &settings_value) {
             updated = true;
         }
@@ -1159,6 +1147,11 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
 
         if updated {
             store.set("settings", serde_json::to_value(&settings).unwrap());
+            if settings_value.get("post_process_api_keys").is_some() {
+                if let Err(e) = store.save() {
+                    warn!("Could not persist credential migration: {e}");
+                }
+            }
         }
 
         settings
@@ -1475,7 +1468,7 @@ pub fn update_checks_forced_disabled() -> bool {
     use std::sync::OnceLock;
     static IS_UPDATER_DISABLED: OnceLock<bool> = OnceLock::new();
     *IS_UPDATER_DISABLED.get_or_init(|| {
-        cfg!(feature = "disable-updater")
+        cfg!(any(feature = "disable-updater", not(feature = "updater")))
             || utils::env_flag_enabled("HANDY_DISABLE_UPDATER")
             || !self_update_possible()
     })
@@ -2130,32 +2123,16 @@ mod tests {
     }
 
     #[test]
-    fn debug_output_redacts_api_keys() {
-        let mut settings = get_default_settings();
-        settings
-            .post_process_api_keys
-            .insert("openai".to_string(), "sk-proj-secret-key-12345".to_string());
-        settings.post_process_api_keys.insert(
-            "anthropic".to_string(),
-            "sk-ant-secret-key-67890".to_string(),
-        );
-        settings
-            .post_process_api_keys
-            .insert("empty_provider".to_string(), "".to_string());
-
-        let debug_output = format!("{:?}", settings);
-
-        assert!(!debug_output.contains("sk-proj-secret-key-12345"));
-        assert!(!debug_output.contains("sk-ant-secret-key-67890"));
-        assert!(debug_output.contains("[REDACTED]"));
-    }
-
-    #[test]
-    fn secret_map_debug_redacts_values() {
-        let map = SecretMap(HashMap::from([("key".into(), "secret".into())]));
-        let out = format!("{:?}", map);
-        assert!(!out.contains("secret"));
-        assert!(out.contains("[REDACTED]"));
+    fn settings_serialization_drops_legacy_credentials() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "post_process_api_keys": {"custom": "fixture-private-value"}
+        }))
+        .unwrap();
+        assert!(!format!("{settings:?}").contains("fixture-private-value"));
+        assert!(serde_json::to_value(settings)
+            .unwrap()
+            .get("post_process_api_keys")
+            .is_none());
     }
 
     #[test]

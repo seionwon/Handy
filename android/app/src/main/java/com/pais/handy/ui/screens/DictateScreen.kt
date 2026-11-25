@@ -3,6 +3,7 @@ package com.pais.handy.ui.screens
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,12 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,9 +46,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.pais.handy.R
 import com.pais.handy.data.EngineMode
 import com.pais.handy.data.HandyLanguages
 import com.pais.handy.data.HandySettingsState
@@ -75,8 +79,6 @@ fun DictateScreen(
     onShare: (String) -> Unit,
     onPolish: () -> Unit,
     onClear: () -> Unit,
-    onOpenImeSettings: () -> Unit,
-    onShowImePicker: () -> Unit,
     onGoToModels: () -> Unit,
 ) {
     val ko = isKorean()
@@ -92,57 +94,6 @@ fun DictateScreen(
             .padding(horizontal = 20.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Voice Keyboard quick-setup banner
-        if (!ui.imeEnabled || !ui.imeSelected) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.primaryContainer.copy(alpha = 0.55f)),
-                border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f)),
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.Keyboard,
-                            contentDescription = null,
-                            tint = colors.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = localized(
-                                "다른 앱에서도 Handy 음성 키보드 사용하기",
-                                "Use Handy Voice Keyboard in any app",
-                            ),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = localized(
-                            "카톡·메모·브라우저 등 어디서나 키보드 전환 버튼으로 바로 음성 입력할 수 있습니다.",
-                            "Enable Handy Voice Keyboard to dictate directly into messaging, notes, and browsers.",
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (!ui.imeEnabled) {
-                            Button(onClick = onOpenImeSettings) {
-                                Text(localized("키보드 활성화", "Enable Keyboard"))
-                            }
-                        }
-                        OutlinedButton(onClick = onShowImePicker) {
-                            Text(localized("키보드 선택", "Switch Keyboard"))
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-        }
-
         // Engine & language selector pills
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -178,41 +129,6 @@ fun DictateScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        // Microphone permission gate
-        if (!hasMicPermission) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.surfaceVariant),
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        text = localized("마이크 권한이 필요합니다", "Microphone permission required"),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = localized(
-                            "음성을 녹음해 텍스트로 변환하려면 마이크 접근을 허용해주세요.",
-                            "Allow microphone access so Handy can listen and transcribe your voice.",
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center,
-                        color = colors.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = onRequestMicPermission) {
-                        Text(localized("마이크 권한 허용", "Allow Microphone"))
-                    }
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-        }
-
         // Animated Voice Orb
         val pulseScale by animateFloatAsState(
             targetValue = if (isRecording) 1.0f + (ui.liveLevel * 0.16f) else 1.0f,
@@ -233,38 +149,42 @@ fun DictateScreen(
                 )
             }
 
+            val toggleRecording: () -> Unit = {
+                when (ui.phase) {
+                    DictationPhase.IDLE -> onStartDictation()
+                    DictationPhase.RECORDING -> onStopDictation()
+                    else -> Unit
+                }
+            }
+            val micControl = when {
+                !hasMicPermission -> Modifier.clickable(role = Role.Button, onClick = onRequestMicPermission)
+                !settings.holdToTalk -> Modifier.clickable(
+                    enabled = !isProcessing, role = Role.Button, onClick = toggleRecording,
+                )
+                else -> Modifier
+                    .semantics {
+                        role = Role.Button
+                        onClick {
+                            toggleRecording()
+                            true
+                        }
+                    }
+                    .pointerInput(onStartDictation, onStopDictation) {
+                        detectTapGestures(onPress = {
+                            onStartDictation()
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                onStopDictation()
+                            }
+                        })
+                    }
+            }
             Surface(
                 modifier = Modifier
                     .size(132.dp)
                     .clip(CircleShape)
-                    .pointerInput(settings.holdToTalk, ui.phase, hasMicPermission) {
-                        detectTapGestures(
-                            onPress = {
-                                if (!hasMicPermission) {
-                                    onRequestMicPermission()
-                                    return@detectTapGestures
-                                }
-                                if (settings.holdToTalk) {
-                                    onStartDictation()
-                                    tryAwaitRelease()
-                                    onStopDictation()
-                                }
-                            },
-                            onTap = {
-                                if (!hasMicPermission) {
-                                    onRequestMicPermission()
-                                    return@detectTapGestures
-                                }
-                                if (!settings.holdToTalk) {
-                                    when (ui.phase) {
-                                        DictationPhase.IDLE -> onStartDictation()
-                                        DictationPhase.RECORDING -> onStopDictation()
-                                        else -> {}
-                                    }
-                                }
-                            },
-                        )
-                    },
+                    .then(micControl),
                 shape = CircleShape,
                 color = if (isRecording) colors.error else colors.primary,
                 shadowElevation = 6.dp,
@@ -302,10 +222,10 @@ fun DictateScreen(
         }
 
         val statusLabel = when (ui.phase) {
-            DictationPhase.IDLE -> if (settings.holdToTalk) {
-                localized("버튼을 누르고 있는 동안 말하세요", "Press and hold to speak")
-            } else {
-                localized("탭해서 녹음을 시작하세요", "Tap to start speaking")
+            DictationPhase.IDLE -> when {
+                !hasMicPermission -> stringResource(R.string.mic_request_hint)
+                settings.holdToTalk -> localized("버튼을 누르고 있는 동안 말하세요", "Press and hold to speak")
+                else -> localized("탭해서 녹음을 시작하세요", "Tap to start speaking")
             }
             DictationPhase.RECORDING -> {
                 val secs = ui.elapsedMs / 1000L

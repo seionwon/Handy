@@ -1,36 +1,51 @@
 import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { X } from "lucide-react";
 import { Input } from "../../ui/Input";
 
 interface ApiKeyFieldProps {
-  value: string;
+  configured: boolean;
   onBlur: (value: string) => void;
   disabled: boolean;
   placeholder?: string;
   className?: string;
 }
 
-export const ApiKeyField: React.FC<ApiKeyFieldProps> = React.memo(
-  ({ value, onBlur, disabled, placeholder, className = "" }) => {
-    const [localValue, setLocalValue] = useState(value);
-
-    // Sync with prop changes
-    React.useEffect(() => {
-      setLocalValue(value);
-    }, [value]);
-
-    return (
+export const ApiKeyField = ({
+  configured,
+  onBlur,
+  disabled,
+  placeholder,
+  className = "",
+}: ApiKeyFieldProps) => {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState("");
+  return (
+    <>
       <Input
         type="password"
-        value={localValue}
-        onChange={(event) => setLocalValue(event.target.value)}
-        onBlur={() => onBlur(localValue)}
-        placeholder={placeholder}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (draft.trim()) onBlur(draft);
+          setDraft("");
+        }}
+        placeholder={configured ? "••••••••" : placeholder}
         variant="compact"
         disabled={disabled}
         className={`flex-1 min-w-[320px] ${className}`}
       />
-    );
-  },
-);
-
-ApiKeyField.displayName = "ApiKeyField";
+      {configured && (
+        <button
+          type="button"
+          aria-label={t("common.clear")}
+          title={t("common.clear")}
+          disabled={disabled}
+          onClick={() => onBlur("")}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      )}
+    </>
+  );
+};

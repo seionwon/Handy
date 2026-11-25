@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dictation_button_name">Handy 받아쓰기</string>
+    <string name="dictation_button_summary">기존 키보드에서 받아쓰기</string>
+    <string name="dictation_button_description">접근성 버튼을 누르고 말하면 Handy가 마이크로 음성을 받아 커서에 입력합니다. Handy에서 선택한 음성 인식과 후처리 설정을 사용합니다.</string>
+    <string name="dictation_button_setup">Android 접근성 설정에서 ‘Handy 받아쓰기’를 켜고 바로가기로 ‘접근성 버튼’을 선택하세요. 그다음 글을 쓸 곳에서 버튼을 한 번 누르고 말하세요.</string>
+    <string name="dictation_button_enabled">Handy 받아쓰기가 켜져 있습니다. 바로가기로 ‘접근성 버튼’을 선택하세요. 입력칸에서 버튼을 한 번 누르고 말한 뒤 잠시 멈추면 글이 들어갑니다.</string>
+    <string name="dictation_button_settings">접근성 설정 열기</string>
+    <string name="dictation_settings_unavailable">Android 설정의 접근성에서 ‘Handy 받아쓰기’를 선택하세요.</string>
+    <string name="dictation_allow_mic">마이크 허용</string>
+</resources>

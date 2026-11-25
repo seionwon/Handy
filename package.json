@@ -1,7 +1,7 @@
 {
   "name": "handy-app",
   "private": true,
-  "version": "0.10.2-seionwon",
+  "version": "0.10.4-seionwon",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
     "format:frontend": "prettier --write .",
     "format:backend": "cd src-tauri && cargo fmt",
     "test:keyboard": "bun src/lib/utils/keyboard.test.ts",
+    "test:i18n": "bun scripts/test-i18n.ts",
     "test:qr": "bun src/components/android/qrMatrix.test.ts",
     "test:permissions": "bun src/lib/permissionPolling.test.ts && bun src/lib/inputInitialization.test.ts && bun src/lib/accessibilityPermission.test.ts && bun src/lib/startup.test.ts",
     "test:macos-signing": "bun scripts/test-macos-signing.ts",
@@ -31,7 +32,7 @@
   },
   "dependencies": {
     "@handy-computer/models": "0.2.3",
-    "@tailwindcss/vite": "^4.1.16",
+    "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-autostart": "~2.5.1",
     "@tauri-apps/plugin-clipboard-manager": "~2.3.2",
@@ -52,9 +53,8 @@
     "react-i18next": "^16.4.1",
     "react-markdown": "^10.1.0",
     "react-select": "^5.8.0",
-    "tailwindcss": "^4.1.16",
+    "tailwindcss": "4.3.3",
     "tauri-plugin-macos-permissions-api": "2.3.0",
-    "zod": "^3.25.76",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
@@ -72,6 +72,6 @@
     "prettier": "^3.6.2",
     "subset-font": "2.3.0",
     "typescript": "~5.6.3",
-    "vite": "^6.4.1"
+    "vite": "^6.4.6"
   }
 }

@@ -12,7 +12,20 @@
     <string name="ime_space">Space</string>
     <string name="ime_enter">Enter</string>
     <string name="ime_need_mic">Allow microphone permission in Handy</string>
+    <string name="mic_request_hint">Tap the microphone to allow recording.</string>
+    <string name="mic_settings_hint">You can allow the microphone in Settings → Apps → Handy → Permissions.</string>
+    <string name="mic_open_app_settings">App settings</string>
     <string name="ime_need_model">Download a Whisper model in Handy or switch to Instant</string>
     <string name="ime_ai_on">AI On</string>
     <string name="ime_ai_off">AI Off</string>
+    <string name="ime_private_field">Voice input is off for this field</string>
+    <string name="dictation_choose_field">Tap a text field first, then press the Handy button.</string>
+    <string name="dictation_no_speech">No speech detected</string>
+    <string name="dictation_no_result">No result from the speech recognizer. Tap to try again.</string>
+    <string name="dictation_recognizer_unavailable">System speech recognition is unavailable. Open Models in Handy to choose Offline Whisper.</string>
+    <string name="dictation_audio_error">Could not record from the microphone.</string>
+    <string name="dictation_network_error">System speech recognition could not connect. You can use Offline Whisper in Handy’s Models tab.</string>
+    <string name="dictation_recognizer_busy">The speech recognizer is busy. Try again in a moment.</string>
+    <string name="dictation_recognizer_error">Speech recognition failed (error %1$d).</string>
+    <string name="dictation_failed">Dictation failed. Tap to try again.</string>
 </resources>

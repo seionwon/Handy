@@ -121,12 +121,13 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
           >
             <div className="flex items-center gap-2">
               <ApiKeyField
-                value={state.apiKey}
+                key={JSON.stringify([state.selectedProviderId, state.baseUrl])}
+                configured={state.hasApiKey}
                 onBlur={state.handleApiKeyChange}
                 placeholder={t(
                   "settings.postProcessing.api.apiKey.placeholder",
                 )}
-                disabled={state.isApiKeyUpdating}
+                disabled={state.isApiKeyUpdating || state.isBaseUrlUpdating}
                 className="min-w-[320px]"
               />
             </div>

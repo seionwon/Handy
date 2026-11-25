@@ -24,7 +24,7 @@ async function bootstrap() {
     { default: App },
     { installCompatShims },
     { applyTheme, getStoredTheme, syncThemeFromSettings },
-    ,
+    { initialLanguageReady },
     { useModelStore },
     { useNoticeStore },
     { useTranscriptionJobsStore },
@@ -53,6 +53,7 @@ async function bootstrap() {
   useTranscriptionJobsStore.getState().initialize();
   useNoticeStore.getState().initialize();
 
+  await initialLanguageReady;
   ReactDOM.createRoot(rootEl).render(
     <React.StrictMode>
       <App />

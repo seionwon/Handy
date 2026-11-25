@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -16,17 +18,19 @@ import "./App.css";
 import QuitButton from "./components/QuitButton";
 import SecureInputWarning from "./components/SecureInputWarning";
 import Footer from "./components/footer";
-import { OnboardingFlow } from "./components/onboarding/OnboardingFlow";
-import ModelMigration from "./components/onboarding/ModelMigration";
 import {
+  DebugSettings,
+  ModelMigration,
+  ModelsSettings,
+  OnboardingFlow,
   ReplaceModel,
   ReturningPermissions,
-} from "./components/onboarding/StandaloneScreens";
+  preloadSettingsSections,
+} from "./components/lazyScreens";
 import {
   clearOnboardingProgress,
   type OnboardingStep as OnboardingPreviewStep,
 } from "./components/onboarding/onboardingStore";
-import { DebugSettings, ModelsSettings } from "./components/settings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { FileDropOverlay } from "./components/FileDropOverlay";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
@@ -88,7 +92,15 @@ function App() {
   const [migrationModelId, setMigrationModelId] = useState<string | null>(null);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
-  const showHistory = useCallback(() => setCurrentSection("history"), []);
+  // A tab's code is read on first use. The transition keeps the current tab
+  // on screen until the next one is ready instead of flashing an empty page.
+  const changeSection = useCallback((section: SidebarSection) => {
+    startTransition(() => setCurrentSection(section));
+  }, []);
+  const showHistory = useCallback(
+    () => changeSection("history"),
+    [changeSection],
+  );
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -134,6 +146,20 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // Once the settings are on screen and the window is idle, read the other
+  // tabs so the first switch to each is immediate.
+  useEffect(() => {
+    if (onboardingStep !== "done") return;
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(preloadSettingsSections, {
+        timeout: 3000,
+      });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(preloadSettingsSections, 1000);
+    return () => window.clearTimeout(id);
+  }, [onboardingStep]);
 
   // Initialize RTL direction when language changes
   useEffect(() => {
@@ -238,19 +264,18 @@ function App() {
     setOnboardingStep("done");
   };
 
-  // Still checking onboarding status
-  if (onboardingStep === null) {
-    return (
-      <div className="relative h-screen flex items-center justify-center">
-        <div className="absolute top-4 right-4">
-          <QuitButton />
-        </div>
-        <p role="status" className="text-text/60">
-          {t("common.loading")}
-        </p>
+  // Shown while checking onboarding status and while a screen's code loads.
+  const loadingScreen = (
+    <div className="relative h-screen flex items-center justify-center">
+      <div className="absolute top-4 right-4">
+        <QuitButton />
       </div>
-    );
-  }
+      <p role="status" className="text-text/60">
+        {t("common.loading")}
+      </p>
+    </div>
+  );
+  if (onboardingStep === null) return loadingScreen;
 
   // Select the content for the current step. NoticePanel is rendered once,
   // beside this node, so errors surface on every step, including onboarding.
@@ -310,7 +335,7 @@ function App() {
         <div className="flex-1 flex overflow-hidden">
           <Sidebar
             activeSection={currentSection}
-            onSectionChange={setCurrentSection}
+            onSectionChange={changeSection}
           />
           {/* Scrollable content area */}
           <div className="flex-1 flex flex-col overflow-hidden">
@@ -320,13 +345,15 @@ function App() {
                 className={`flex flex-col items-center p-4 gap-4 ${currentSection === "models" ? "h-full" : ""}`}
               >
                 <SecureInputWarning />
-                {renderSettingsContent(
-                  currentSection,
-                  setOnboardingPreview,
-                  runOnboarding,
-                  runModelMigration,
-                  setCurrentSection,
-                )}
+                <Suspense fallback={null}>
+                  {renderSettingsContent(
+                    currentSection,
+                    setOnboardingPreview,
+                    runOnboarding,
+                    runModelMigration,
+                    changeSection,
+                  )}
+                </Suspense>
               </div>
             </div>
           </div>
@@ -340,7 +367,7 @@ function App() {
 
   return (
     <>
-      {content}
+      <Suspense fallback={loadingScreen}>{content}</Suspense>
       <NoticePanel />
     </>
   );

@@ -256,6 +256,7 @@ fn shared_client() -> Result<&'static reqwest::Client, String> {
 
 /// Create an HTTP client with provider-specific headers
 fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<ProviderClient, String> {
+    crate::provider_credentials::origin(&provider.base_url)?;
     Ok(ProviderClient {
         client: shared_client()?,
         headers: build_headers(provider, api_key)?,
@@ -529,9 +530,11 @@ pub async fn send_chat_completion_with_schema(
             .text()
             .await
             .unwrap_or_else(|e| report_reqwest_error("Failed to read API error response", &e));
+        // A provider may echo the prompt or key in its error body.
         return Err(format!(
             "API request failed with status {}: {}",
-            status, error_text
+            status,
+            crate::utils::redact_text(&error_text)
         ));
     }
 
@@ -600,9 +603,11 @@ async fn send_anthropic_message(
             .text()
             .await
             .unwrap_or_else(|e| report_reqwest_error("Failed to read API error response", &e));
+        // A provider may echo the prompt or key in its error body.
         return Err(format!(
             "API request failed with status {}: {}",
-            status, error_text
+            status,
+            crate::utils::redact_text(&error_text)
         ));
     }
 

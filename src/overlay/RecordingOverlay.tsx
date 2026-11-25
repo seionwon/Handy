@@ -93,6 +93,7 @@ const RecordingOverlay: React.FC = () => {
   const direction = getLanguageDirection(i18n.language);
 
   useEffect(() => {
+    let showRequest = 0;
     const setupEventListeners = async () => {
       const unlistenNotice = await listen<Notice>("overlay-notice", (event) => {
         clearTimeout(fadeTimerRef.current);
@@ -100,6 +101,7 @@ const RecordingOverlay: React.FC = () => {
       });
 
       const unlistenShow = await listen("show-overlay", async (event) => {
+        const request = ++showRequest;
         const overlayState = event.payload as OverlayState;
         clearTimeout(fadeTimerRef.current);
         if (!isNoticeState(overlayState)) setNotice(null);
@@ -113,19 +115,6 @@ const RecordingOverlay: React.FC = () => {
           setStreamText({ committed: "", tentative: "" });
         }
 
-        await syncLanguageFromSettings();
-        // The Live panel flows downward from a top overlay and upward from a
-        // bottom one; read the placement so the layout can flip to match.
-        try {
-          const settings = await commands.getAppSettings();
-          if (settings.status === "ok") {
-            setPosition(
-              settings.data.overlay_position === "top" ? "top" : "bottom",
-            );
-          }
-        } catch {
-          // Keep the previous/default placement if settings can't be read.
-        }
         setState(overlayState);
         if (overlayState === "streaming") {
           setPhase("listening");
@@ -134,10 +123,22 @@ const RecordingOverlay: React.FC = () => {
           setLoadNoticeShown(false);
           setSession((s) => s + 1); // remount the card fresh for this session
         }
+        // One settings read supplies both placement and language. A cold
+        // dictionary load can finish after the overlay is already visible.
+        const preferences = commands.getAppSettings();
+        void syncLanguageFromSettings(preferences);
+        const settings = await preferences.catch(() => null);
+        if (request !== showRequest) return;
+        if (settings?.status === "ok") {
+          setPosition(
+            settings.data.overlay_position === "top" ? "top" : "bottom",
+          );
+        }
         setIsVisible(true);
       });
 
       const unlistenHide = await listen("hide-overlay", () => {
+        ++showRequest;
         setIsVisible(false);
         setCaptureReady(false);
         // A notice keeps rendering while it fades. Dropping the transcript here
@@ -212,12 +213,16 @@ const RecordingOverlay: React.FC = () => {
         unlistenStream();
         unlistenPhase();
         unlistenModel();
-        clearTimeout(modelLoadTimerRef.current);
-        clearTimeout(fadeTimerRef.current);
       };
     };
 
-    setupEventListeners();
+    const listeners = setupEventListeners();
+    return () => {
+      ++showRequest;
+      clearTimeout(modelLoadTimerRef.current);
+      clearTimeout(fadeTimerRef.current);
+      void listeners.then((unlisten) => unlisten());
+    };
   }, []);
 
   // Elapsed capture timer starts only once microphone samples are flowing.

@@ -11,6 +11,9 @@
 export const PORTABLE_RELEASES_URL =
   "https://github.com/cjpais/Handy/releases/latest";
 
+const RELEASE_ASSET_PREFIX =
+  "https://github.com/cjpais/Handy/releases/download/";
+
 /**
  * Pick the NSIS installer URL for the running target out of the update manifest.
  * Falls back to the generic releases page whenever there is no matching entry —
@@ -36,6 +39,10 @@ export function resolvePortableInstallerUrl(
   ];
   if (!entry || typeof entry !== "object") return PORTABLE_RELEASES_URL;
 
+  // The manifest's signature covers the bundles, not this link, and the link is
+  // opened in the browser. Follow it only to a release asset of this project.
   const url = (entry as Record<string, unknown>).url;
-  return typeof url === "string" ? url : PORTABLE_RELEASES_URL;
+  return typeof url === "string" && url.startsWith(RELEASE_ASSET_PREFIX)
+    ? url
+    : PORTABLE_RELEASES_URL;
 }

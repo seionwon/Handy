@@ -1,13 +1,13 @@
 {
-  "version": "0.10.3-seionwon",
-  "title": "Handy 설치 파일 · Android 0.10.3-seionwon · macOS 및 Windows 0.10.2-seionwon",
+  "version": "0.10.4-seionwon",
+  "title": "Handy 설치 파일 · Android 0.10.4-seionwon · macOS 및 Windows 0.10.2-seionwon",
   "assets": [
     {
       "device": "Android 8.0+ · ARM64 / x86_64",
       "label": "Android APK",
-      "version": "0.10.3-seionwon",
-      "file": "Handy-v0.10.3-seionwon.apk",
-      "sha256": "0cca5a81fe2bd731f84aaaaef65fcdc6d1fcf20001ffff8d8d73f54e12a1cb0f"
+      "version": "0.10.4-seionwon",
+      "file": "Handy-v0.10.4-seionwon.apk",
+      "sha256": "71891b2fd7490663a014476f4be47c340a06b3fb47a5bb60f796880ef48ec86e"
     },
     {
       "device": "macOS · Apple Silicon (M 시리즈)",

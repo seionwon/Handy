@@ -6,8 +6,6 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "store:default",
-    "updater:default",
     "process:default",
     "dialog:default",
     "fs:read-files",

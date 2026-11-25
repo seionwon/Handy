@@ -8,6 +8,7 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import com.pais.handy.R
 import java.util.Locale
 
 /**
@@ -24,30 +25,41 @@ class SystemSpeechEngine(private val context: Context) {
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
+    private fun onMain(action: () -> Unit) {
+        if (Looper.myLooper() == mainHandler.looper) action() else mainHandler.post(action)
+    }
+
     fun start(
         bcp47Language: String?,
         onRmsLevel: (Float) -> Unit,
         onPartial: (String) -> Unit,
         onResult: (String) -> Unit,
         onError: (String) -> Unit,
+        onSpeechEnd: () -> Unit = {},
     ) {
-        mainHandler.post {
+        onMain {
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                onError("Android speech recognition service is unavailable on this device. Switch to Offline Whisper in Models.")
-                return@post
+                onError(context.getString(R.string.dictation_recognizer_unavailable))
+                return@onMain
             }
             destroyInternal()
-            val sr = SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
+            val sr = try {
+                SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
+            } catch (e: RuntimeException) {
+                onError(e.localizedMessage ?: context.getString(R.string.dictation_failed))
+                return@onMain
+            }
             recognizer = sr
             var lastPartial = ""
             sr.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
-                    isListening = true
+                    if (recognizer === sr) isListening = true
                 }
 
                 override fun onBeginningOfSpeech() {}
 
                 override fun onRmsChanged(rmsdB: Float) {
+                    if (recognizer !== sr) return
                     val normalized = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
                     onRmsLevel(normalized)
                 }
@@ -55,11 +67,14 @@ class SystemSpeechEngine(private val context: Context) {
                 override fun onBufferReceived(buffer: ByteArray?) {}
 
                 override fun onEndOfSpeech() {
+                    if (recognizer !== sr) return
                     isListening = false
                     onRmsLevel(0f)
+                    onSpeechEnd()
                 }
 
                 override fun onError(error: Int) {
+                    if (recognizer !== sr) return
                     isListening = false
                     onRmsLevel(0f)
                     if (error == SpeechRecognizer.ERROR_NO_MATCH && lastPartial.isNotBlank()) {
@@ -70,6 +85,7 @@ class SystemSpeechEngine(private val context: Context) {
                 }
 
                 override fun onResults(results: Bundle?) {
+                    if (recognizer !== sr) return
                     isListening = false
                     onRmsLevel(0f)
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -78,6 +94,7 @@ class SystemSpeechEngine(private val context: Context) {
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
+                    if (recognizer !== sr) return
                     val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val text = matches?.firstOrNull()?.trim().orEmpty()
                     if (text.isNotEmpty()) {
@@ -100,20 +117,25 @@ class SystemSpeechEngine(private val context: Context) {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang)
             }
-            isListening = true
-            sr.startListening(intent)
+            try {
+                isListening = true
+                sr.startListening(intent)
+            } catch (e: RuntimeException) {
+                destroyInternal()
+                onError(e.localizedMessage ?: context.getString(R.string.dictation_failed))
+            }
         }
     }
 
     fun stopListening() {
-        mainHandler.post {
+        onMain {
             isListening = false
             runCatching { recognizer?.stopListening() }
         }
     }
 
     fun cancel() {
-        mainHandler.post {
+        onMain {
             isListening = false
             runCatching { recognizer?.cancel() }
             destroyInternal()
@@ -121,23 +143,25 @@ class SystemSpeechEngine(private val context: Context) {
     }
 
     fun destroy() {
-        mainHandler.post { destroyInternal() }
+        onMain { destroyInternal() }
     }
 
     private fun destroyInternal() {
         isListening = false
-        runCatching { recognizer?.destroy() }
+        val old = recognizer
         recognizer = null
+        runCatching { old?.destroy() }
     }
 
-    private fun describeError(code: Int): String = when (code) {
-        SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required"
-        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-            "Network unavailable for system speech. Download an offline Whisper model for 100% local transcription."
-        SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer is busy"
-        else -> "Speech recognition error ($code)"
+    private fun describeError(code: Int): String {
+        val message = when (code) {
+            SpeechRecognizer.ERROR_AUDIO -> R.string.dictation_audio_error
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> R.string.ime_need_mic
+            SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> R.string.dictation_network_error
+            SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> R.string.dictation_no_speech
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> R.string.dictation_recognizer_busy
+            else -> return context.getString(R.string.dictation_recognizer_error, code)
+        }
+        return context.getString(message)
     }
 }

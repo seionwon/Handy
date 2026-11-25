@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="dictation_button_name">Handy Dictation</string>
+    <string name="dictation_button_summary">Dictate with your usual keyboard</string>
+    <string name="dictation_button_description">Tap the accessibility button to speak. Handy uses the microphone and inserts the result at the cursor using your speech and post-processing settings.</string>
+    <string name="dictation_button_setup">In Android Accessibility settings, turn on Handy Dictation. Under its shortcut, choose Accessibility button. Then tap a text field and press the button once to dictate.</string>
+    <string name="dictation_button_enabled">Handy Dictation is on. Choose Accessibility button as its shortcut. Tap the button in a text field and speak. Pausing inserts the text.</string>
+    <string name="dictation_button_settings">Open accessibility settings</string>
+    <string name="dictation_settings_unavailable">Open Accessibility in Android Settings and select Handy Dictation.</string>
+    <string name="dictation_allow_mic">Allow microphone</string>
+</resources>

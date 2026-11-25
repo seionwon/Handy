@@ -1,8 +1,12 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog } from "../ui";
-import { MarkdownContent } from "./MarkdownContent";
 import type { ReleaseNote } from "./releaseNotes";
+
+// The Markdown renderer is large and only needed when release notes show.
+const MarkdownContent = lazy(() =>
+  import("./MarkdownContent").then((m) => ({ default: m.MarkdownContent })),
+);
 
 interface WhatsNewModalProps {
   note: ReleaseNote;
@@ -26,7 +30,9 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({
         if (!nextOpen) onDismiss();
       }}
     >
-      <MarkdownContent markdown={note.markdown} />
+      <Suspense fallback={null}>
+        <MarkdownContent markdown={note.markdown} />
+      </Suspense>
     </Dialog>
   );
 };

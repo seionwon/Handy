@@ -119,7 +119,8 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
     if (!preview) return;
     const before = i18n.language;
     return () => {
-      if (i18n.language !== before) i18n.changeLanguage(before);
+      // A preview selection may still be loading when the preview closes.
+      void i18n.changeLanguage(before);
     };
   }, [preview]);
 

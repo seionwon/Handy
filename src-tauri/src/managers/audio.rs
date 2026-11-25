@@ -107,7 +107,9 @@ fn set_mute(mute: bool) {
             "set volume output muted {}",
             if mute { "true" } else { "false" }
         );
-        let _ = Command::new("osascript").args(["-e", &script]).output();
+        let _ = Command::new("/usr/bin/osascript")
+            .args(["-e", &script])
+            .output();
     }
 }
 
@@ -202,7 +204,7 @@ fn get_mute() -> Option<bool> {
 fn get_mute() -> Option<bool> {
     use std::process::Command;
 
-    let out = Command::new("osascript")
+    let out = Command::new("/usr/bin/osascript")
         .args(["-e", "output muted of (get volume settings)"])
         .output()
         .ok()?;

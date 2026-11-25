@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { version as FALLBACK_VERSION } from "../../../package.json";
 import {
   Check,
   Copy,
@@ -41,7 +42,6 @@ interface AndroidApkMeta {
   builtAt: string;
 }
 
-const FALLBACK_VERSION = "0.10.2-seionwon";
 const FALLBACK_FILE_NAME = `Handy-v${FALLBACK_VERSION}.apk`;
 const FALLBACK_RELATIVE_APK = `downloads/${FALLBACK_FILE_NAME}`;
 const RELATIVE_META_PATH = "downloads/android-apk-meta.json";
@@ -78,25 +78,16 @@ const COPY = {
     customOriginPlaceholder: "http://192.168.0.10:1420",
     customOriginLabel: "휴대폰 접속용 주소 (선택)",
     resetOrigin: "기본값",
-    stepsHeading: "휴대폰 설치 및 음성 키보드 켜기",
-    stepsSub:
-      "처음 한 번만 설정하면 카카오톡·메모·브라우저 등 모든 앱에서 바로 받아쓸 수 있습니다.",
+    stepsHeading: "휴대폰에 설치하고 받아쓰기",
+    stepsSub: "평소 쓰는 키보드를 그대로 두고 시작할 수 있습니다.",
     steps: [
       {
         title: "1. APK 다운로드 및 설치",
         body: "휴대폰 브라우저에서 위 링크를 눌러 버전이 표시된 APK를 내려받은 뒤 실행하세요. 보안 안내가 뜨면 '이 출처의 앱 허용(알 수 없는 앱 설치)'을 켜고 설치합니다.",
       },
       {
-        title: "2. 마이크 권한 및 음성 엔진 준비",
-        body: "Handy 앱을 열고 마이크 권한을 허용하세요. 모델 없이도 'Android 즉시 음성 인식'으로 바로 시작할 수 있으며, '모델' 탭에서 Whisper Tiny/Base/Small을 받으면 완전 오프라인으로 동작합니다.",
-      },
-      {
-        title: "3. Handy 음성 키보드(IME) 활성화",
-        body: "안드로이드 설정 > 일반 > 키보드 목록 및 기본 키보드에서 'Handy 음성 키보드'를 켭니다. 앱의 받아쓰기/설정 탭에 바로가기 버튼이 있습니다.",
-      },
-      {
-        title: "4. 어떤 앱에서나 음성 입력",
-        body: "메시지나 메모 입력창에서 하단 키보드 전환 버튼(🌐 또는 ⌨️)으로 Handy 음성 키보드를 선택하고 마이크 버튼을 눌러 말하면 자동으로 입력됩니다.",
+        title: "2. Handy에서 녹음",
+        body: "음성 입력 화면에서 마이크를 누르고, 처음 녹음할 때 마이크 사용을 허용하세요. 기본 설정에서는 받아쓴 문장이 자동으로 복사되므로 메시지나 메모에 붙여넣을 수 있습니다.",
       },
     ],
     featuresHeading: "Android 버전에 포함된 기능",
@@ -109,7 +100,7 @@ const COPY = {
       {
         icon: "keyboard",
         title: "시스템 전체 음성 키보드",
-        body: "Android InputMethodService로 구현되어 카카오톡, Slack, 브라우저, 메모 등 모든 앱의 입력창에 바로 텍스트를 입력합니다.",
+        body: "입력칸에서 직접 받아쓰려면 Handy 설정에서 ‘키보드 설정 열기’를 눌러 Handy 음성 키보드를 켜고, 입력할 때 키보드 전환 버튼으로 선택하세요.",
       },
       {
         icon: "audio",
@@ -168,25 +159,16 @@ const COPY = {
     customOriginPlaceholder: "http://192.168.0.10:1420",
     customOriginLabel: "Phone-reachable address (optional)",
     resetOrigin: "Reset",
-    stepsHeading: "Install & Enable the Voice Keyboard",
-    stepsSub:
-      "Once enabled, you can dictate into any Android app directly from the keyboard.",
+    stepsHeading: "Install and start dictating",
+    stepsSub: "You can keep using your usual keyboard.",
     steps: [
       {
         title: "1. Download and install the APK",
         body: "Tap the versioned APK link above on your Android phone, open the downloaded file, and allow 'Install unknown apps' for your browser when prompted.",
       },
       {
-        title: "2. Grant microphone access & pick an engine",
-        body: "Launch Handy and allow microphone access. Start immediately with Android Instant Speech, or download Whisper Tiny/Base/Small in the Models tab for 100% offline transcription.",
-      },
-      {
-        title: "3. Enable Handy Voice Keyboard (IME)",
-        body: "Open Android Settings > System > Keyboard > On-screen keyboard and toggle on 'Handy Voice Keyboard' (shortcuts are built right into Handy).",
-      },
-      {
-        title: "4. Dictate anywhere",
-        body: "In any text field, tap the keyboard switcher icon (🌐 / ⌨️), choose Handy Voice Keyboard, and press the mic button to speak.",
+        title: "2. Record in Handy",
+        body: "Tap the microphone on the Dictate screen and allow microphone access the first time you record. Handy copies the transcript by default so you can paste it into a message or note.",
       },
     ],
     featuresHeading: "What's built into Handy Android",
@@ -199,7 +181,7 @@ const COPY = {
       {
         icon: "keyboard",
         title: "System-wide Voice Keyboard",
-        body: "Native Android InputMethodService inserts dictated text straight into chat, notes, email, and browser inputs.",
+        body: "To dictate directly into a text field, open Keyboard Settings in Handy’s settings, enable Handy Voice Keyboard, and select it from the keyboard switcher when typing.",
       },
       {
         icon: "audio",

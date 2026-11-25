@@ -164,6 +164,7 @@
 
             preFixup = ''
               gappsWrapperArgs+=(
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.libsecret ]}
                 # Renderer selection (DMA-BUF off vs. forced SHM compositing) is
                 # decided at runtime from the linked WebKitGTK version; setting
                 # WEBKIT_DISABLE_DMABUF_RENDERER or WEBKIT_DMABUF_RENDERER_FORCE_SHM

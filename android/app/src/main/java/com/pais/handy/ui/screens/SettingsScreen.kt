@@ -45,6 +45,8 @@ fun SettingsScreen(
     settings: HandySettingsState,
     imeEnabled: Boolean,
     imeSelected: Boolean,
+    hasMicPermission: Boolean,
+    onRequestMicPermission: () -> Unit,
     onUpdateSettings: ((HandySettingsState) -> HandySettingsState) -> Unit,
     onSelectLlmProvider: (String) -> Unit,
     onOpenImeSettings: () -> Unit,
@@ -63,6 +65,8 @@ fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        DictationButtonSettings(hasMicPermission, onRequestMicPermission)
+
         // Keyboard IME Setup
         SettingsSection(title = localized("시스템 음성 키보드 (IME)", "System Voice Keyboard (IME)")) {
             Text(
@@ -188,6 +192,10 @@ fun SettingsScreen(
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = settings.postProcessBaseUrl,
+                isError = settings.postProcessKeyScope == null,
+                supportingText = if (settings.postProcessKeyScope == null) {
+                    { Text(localized("외부 서버에는 HTTPS 주소를 입력하세요.", "Use an HTTPS address for a remote server.")) }
+                } else null,
                 onValueChange = { v -> onUpdateSettings { it.copy(postProcessBaseUrl = v) } },
                 label = { Text("Base URL") },
                 singleLine = true,
@@ -204,7 +212,10 @@ fun SettingsScreen(
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = settings.postProcessApiKey,
-                onValueChange = { v -> onUpdateSettings { it.copy(postProcessApiKey = v) } },
+                enabled = settings.postProcessKeyScope != null,
+                onValueChange = { v -> onUpdateSettings {
+                    if (it.postProcessKeyScope == settings.postProcessKeyScope) it.copy(postProcessApiKey = v) else it
+                } },
                 label = { Text("API Key") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
@@ -249,7 +260,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SettingsSection(
+internal fun SettingsSection(
     title: String,
     content: @Composable () -> Unit,
 ) {

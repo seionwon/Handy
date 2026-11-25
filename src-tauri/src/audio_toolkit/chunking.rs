@@ -8,7 +8,7 @@
 //! Ported from pi-voice's `chunking.ts`. The cut plan is the same; the Rust
 //! version returns chunks for the caller to decode rather than decoding them.
 
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 use anyhow::Result;
 use log::{debug, warn};
@@ -122,12 +122,17 @@ fn cut_candidates(segments: &[Range<usize>], samples: usize) -> Vec<CutCandidate
 /// that leave at least 5 s after them. With no pause, it is a hard cut at 40 s,
 /// or halfway when that would leave under 5 s. Audio of 40 s or less is never
 /// cut. `candidates` must be in order.
-fn plan_cuts(candidates: &[CutCandidate], samples: usize, from: usize) -> Vec<usize> {
+fn plan_cuts(
+    candidates: &[CutCandidate],
+    samples: usize,
+    from: usize,
+    lookahead: usize,
+) -> Vec<usize> {
     let mut cuts = Vec::new();
     let mut start = from;
     // Each window starts after the last, so earlier candidates never return.
     let mut first = 0;
-    while samples - start > MAX_CHUNK_SAMPLES {
+    while samples - start > MAX_CHUNK_SAMPLES + lookahead {
         while first < candidates.len() && candidates[first].cut < start + MIN_CHUNK_SAMPLES {
             first += 1;
         }
@@ -219,11 +224,11 @@ impl Chunker {
 
     /// Adds audio. Returns the chunks whose cuts this made certain, in order.
     /// A whole clip pushed at once is moved in, not copied.
-    pub fn push(&mut self, pcm: impl Into<Vec<f32>>) -> Vec<Vec<f32>> {
+    pub fn push<'a>(&mut self, pcm: impl Into<Cow<'a, [f32]>>) -> Vec<Vec<f32>> {
         let pcm = pcm.into();
         self.len += pcm.len();
         if self.pending.is_empty() {
-            self.pending = pcm;
+            self.pending = pcm.into_owned();
         } else {
             self.pending.extend_from_slice(&pcm);
         }
@@ -246,38 +251,37 @@ impl Chunker {
         }
         // One plan, committed while each cut's whole window plus the lookahead
         // is scored.
-        let cuts = plan_cuts(&cut_candidates(&segments, scored), scored, self.start);
-        let mut chunks = Vec::new();
-        for cut in cuts {
-            if scored - self.start <= MAX_CHUNK_SAMPLES + LOOKAHEAD_SAMPLES {
-                break;
-            }
-            chunks.push(self.take_until(cut));
-        }
-        chunks
+        let cuts = plan_cuts(
+            &cut_candidates(&segments, scored),
+            scored,
+            self.start,
+            LOOKAHEAD_SAMPLES,
+        );
+        self.take_chunks(cuts)
     }
 
     /// Cuts what is left and returns the remaining chunks, in order. Nothing
     /// more is pushed after.
     pub fn finish(&mut self) -> Vec<Vec<f32>> {
-        let mut chunks = Vec::new();
+        let mut cuts = Vec::new();
         if !self.uncut && self.len - self.start > MAX_CHUNK_SAMPLES {
             match self.score(true) {
                 Ok(_) => {
                     let segments = speech_segments(&self.probs, self.frame_samples, self.len);
-                    let cuts =
-                        plan_cuts(&cut_candidates(&segments, self.len), self.len, self.start);
-                    for cut in cuts {
-                        chunks.push(self.take_until(cut));
-                    }
+                    cuts = plan_cuts(
+                        &cut_candidates(&segments, self.len),
+                        self.len,
+                        self.start,
+                        0,
+                    );
                 }
                 Err(e) => self.stop_cutting(e),
             }
         }
         if self.len > self.start {
-            chunks.push(self.take_until(self.len));
+            cuts.push(self.len);
         }
-        chunks
+        self.take_chunks(cuts)
     }
 
     /// Scores every frame not yet scored, making the scorer first if this is
@@ -322,15 +326,29 @@ impl Chunker {
         self.uncut = true;
     }
 
-    fn take_until(&mut self, cut: usize) -> Vec<f32> {
-        debug!(
-            "Long-form chunk: {:.1}-{:.1}s",
-            seconds(self.start),
-            seconds(cut)
-        );
-        let chunk = self.pending.drain(..cut - self.start).collect();
-        self.start = cut;
-        chunk
+    fn take_chunks(&mut self, cuts: Vec<usize>) -> Vec<Vec<f32>> {
+        // Copy the ready chunks before moving the uncut tail, so even a
+        // whole-file push shifts that tail at most once. Live feeds keep the
+        // buffer's capacity for incoming microphone frames.
+        let base = self.start;
+        let mut chunks = Vec::with_capacity(cuts.len());
+        for cut in cuts {
+            debug!(
+                "Long-form chunk: {:.1}-{:.1}s",
+                seconds(self.start),
+                seconds(cut)
+            );
+            let from = self.start - base;
+            self.start = cut;
+            if cut == self.len {
+                self.pending.drain(..from);
+                chunks.push(std::mem::take(&mut self.pending));
+                return chunks;
+            }
+            chunks.push(self.pending[from..cut - base].to_vec());
+        }
+        self.pending.drain(..self.start - base);
+        chunks
     }
 }
 
@@ -400,7 +418,7 @@ mod tests {
     fn plan(seconds: f64, pauses: &[(f64, f64)]) -> Vec<f64> {
         let samples = s(seconds);
         let segments = speech_segments(&probs_with_pauses(seconds, pauses), FRAME, samples);
-        plan_cuts(&cut_candidates(&segments, samples), samples, 0)
+        plan_cuts(&cut_candidates(&segments, samples), samples, 0, 0)
             .into_iter()
             .map(|cut| (cut as f64 / RATE as f64 * 10.0).round() / 10.0)
             .collect()
@@ -597,6 +615,18 @@ mod tests {
         }
         assert_eq!(lengths(&chunker.finish()), vec![pcm.len()]);
         assert_eq!(counts.made.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn an_uncut_owned_clip_keeps_its_sample_buffer() {
+        let pcm = vec![0.75; FRAME + 1];
+        let original = pcm.as_ptr();
+        let (mut chunker, _) = chunker();
+        assert!(chunker.push(pcm).is_empty());
+        let chunks = chunker.finish();
+        assert_eq!(lengths(&chunks), vec![FRAME + 1]);
+        assert_eq!(chunks[0].as_ptr(), original);
+        assert!(chunker.finish().is_empty());
     }
 
     #[test]

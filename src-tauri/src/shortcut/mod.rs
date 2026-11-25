@@ -1194,7 +1194,8 @@ pub fn change_post_process_base_url_setting(
         ));
     }
 
-    provider.base_url = base_url;
+    crate::provider_credentials::origin(&base_url)?;
+    provider.base_url = base_url.trim().to_owned();
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -1244,12 +1245,37 @@ pub fn change_post_process_api_key_setting(
     app: AppHandle,
     provider_id: String,
     api_key: String,
+    base_url: String,
 ) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    validate_provider_exists(&settings, &provider_id)?;
-    settings.post_process_api_keys.insert(provider_id, api_key);
-    settings::write_settings(&app, settings);
-    Ok(())
+    let settings = settings::get_settings(&app);
+    let provider = settings
+        .post_process_provider(&provider_id)
+        .ok_or("Unknown provider")?;
+    if crate::provider_credentials::origin(&base_url)?
+        != crate::provider_credentials::origin(&provider.base_url)?
+    {
+        return Err("The provider changed. Enter the key for the selected server.".into());
+    }
+    crate::provider_credentials::write(provider, api_key.trim())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn has_post_process_api_key(
+    app: AppHandle,
+    provider_id: String,
+    base_url: String,
+) -> Result<bool, String> {
+    let settings = settings::get_settings(&app);
+    let provider = settings
+        .post_process_provider(&provider_id)
+        .ok_or("Unknown provider")?;
+    if crate::provider_credentials::origin(&base_url)?
+        != crate::provider_credentials::origin(&provider.base_url)?
+    {
+        return Ok(false);
+    }
+    Ok(crate::provider_credentials::read(provider)?.is_some())
 }
 
 #[tauri::command]
@@ -1380,11 +1406,7 @@ pub async fn fetch_post_process_models(
     }
 
     // Get API key
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider_id)
-        .cloned()
-        .unwrap_or_default();
+    let api_key = crate::provider_credentials::read(provider)?.unwrap_or_default();
 
     // Skip fetching if no API key for providers that typically need one
     if api_key.trim().is_empty() && provider.id != "custom" {

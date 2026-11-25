@@ -16,7 +16,10 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.net.URL
+import kotlinx.coroutines.CoroutineStart
 import java.util.concurrent.ConcurrentHashMap
 
 data class ModelDownloadProgress(
@@ -28,7 +31,12 @@ data class ModelDownloadProgress(
         get() = if (totalBytes > 0L) (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
 }
 
-class ModelDownloader(context: Context) {
+class ModelDownloader private constructor(context: Context) {
+    companion object {
+        private var instance: ModelDownloader? = null
+        @Synchronized fun get(context: Context): ModelDownloader =
+            instance ?: ModelDownloader(context.applicationContext).also { instance = it }
+    }
     private val modelsDir: File = File(context.applicationContext.filesDir, "models").apply {
         mkdirs()
     }
@@ -39,39 +47,38 @@ class ModelDownloader(context: Context) {
     private val _downloads = MutableStateFlow<Map<String, ModelDownloadProgress>>(emptyMap())
     val downloads: StateFlow<Map<String, ModelDownloadProgress>> = _downloads.asStateFlow()
 
-    private val _installedIds = MutableStateFlow(scanInstalled())
+    private val _installedIds = MutableStateFlow<Set<String>>(emptySet())
     val installedIds: StateFlow<Set<String>> = _installedIds.asStateFlow()
 
-    fun modelFile(model: WhisperModelInfo): File = File(modelsDir, model.filename)
-
-    fun isInstalled(modelId: String): Boolean {
-        val model = ModelCatalog.byId(modelId) ?: return false
-        val file = modelFile(model)
-        return file.isFile && file.length() > 1_000_000L
+    private val initialScan = scope.launch {
+        for (model in ModelCatalog.models) {
+            val file = modelFile(model)
+            // Older installations have no trusted verification record.
+            val valid = runCatching { model.matches(file) }.getOrDefault(false)
+            synchronized(this@ModelDownloader) {
+                if (valid && file.isFile && file.length() == model.sizeBytes) {
+                    _installedIds.update { it + model.id }
+                }
+            }
+        }
     }
+
+    suspend fun awaitInitialScan() = initialScan.join()
+
+    private fun modelFile(model: WhisperModelInfo): File = File(modelsDir, model.filename)
+
+    fun isInstalled(modelId: String): Boolean = installedModelFile(modelId) != null
 
     fun installedModelFile(modelId: String): File? {
+        if (modelId !in installedIds.value) return null
         val model = ModelCatalog.byId(modelId) ?: return null
-        val file = modelFile(model)
-        return if (file.isFile && file.length() > 1_000_000L) file else null
+        return modelFile(model).takeIf { it.isFile && it.length() == model.sizeBytes }
     }
 
-    fun refreshInstalled() {
-        _installedIds.value = scanInstalled()
-    }
-
-    private fun scanInstalled(): Set<String> =
-        ModelCatalog.models
-            .filter { model ->
-                val f = modelFile(model)
-                f.isFile && f.length() > 1_000_000L
-            }
-            .map { it.id }
-            .toSet()
-
+    @Synchronized
     fun startDownload(model: WhisperModelInfo, onCompleted: (() -> Unit)? = null) {
         if (jobs.containsKey(model.id)) return
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val target = modelFile(model)
             val partial = File(modelsDir, "${model.filename}.partial")
             try {
@@ -79,6 +86,10 @@ class ModelDownloader(context: Context) {
                     it + (model.id to ModelDownloadProgress(0L, model.sizeBytes))
                 }
                 var existing = if (partial.isFile) partial.length() else 0L
+                if (existing >= model.sizeBytes) {
+                    check(partial.delete()) { "Could not reset partial download" }
+                    existing = 0L
+                }
                 val connection = openFollowingRedirects(model.url, existing)
                 try {
                     val code = connection.responseCode
@@ -104,6 +115,7 @@ class ModelDownloader(context: Context) {
                                 val n = input.read(buffer)
                                 if (n < 0) break
                                 if (n == 0) continue
+                                if (written + n > model.sizeBytes) throw java.io.IOException("Model exceeds its expected size")
                                 output.write(buffer, 0, n)
                                 written += n
                                 val now = System.currentTimeMillis()
@@ -118,17 +130,16 @@ class ModelDownloader(context: Context) {
                     }
 
                     if (!isActive) throw CancellationException("Cancelled")
-                    if (partial.length() < 1_000_000L) {
+                    if (!model.matches(partial)) {
                         partial.delete()
-                        throw IllegalStateException("Downloaded file is unexpectedly small")
+                        throw IllegalStateException("Model verification failed. Download the model again.")
                     }
-                    if (target.exists()) target.delete()
-                    if (!partial.renameTo(target)) {
-                        partial.copyTo(target, overwrite = true)
-                        partial.delete()
+                    synchronized(this@ModelDownloader) {
+                        if (!isActive) throw CancellationException("Cancelled")
+                        Files.move(partial.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                        _installedIds.update { it + model.id }
                     }
                     _downloads.update { it - model.id }
-                    refreshInstalled()
                     onCompleted?.invoke()
                 } finally {
                     connection.disconnect()
@@ -139,30 +150,33 @@ class ModelDownloader(context: Context) {
                 _downloads.update {
                     it + (model.id to ModelDownloadProgress(0L, model.sizeBytes, error = e.message ?: "Download failed"))
                 }
-            } finally {
-                jobs.remove(model.id)
             }
         }
         jobs[model.id] = job
+        job.invokeOnCompletion { jobs.remove(model.id, job) }
+        job.start()
     }
 
     fun cancelDownload(modelId: String) {
-        jobs.remove(modelId)?.cancel()
+        jobs[modelId]?.cancel()
         _downloads.update { it - modelId }
     }
 
+    @Synchronized
     fun deleteModel(modelId: String) {
         cancelDownload(modelId)
         val model = ModelCatalog.byId(modelId) ?: return
         modelFile(model).delete()
         File(modelsDir, "${model.filename}.partial").delete()
-        refreshInstalled()
+        _installedIds.update { it - modelId }
     }
 
     private fun openFollowingRedirects(urlStr: String, rangeStart: Long): HttpURLConnection {
         var currentUrl = urlStr
         repeat(6) {
-            val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+            val url = URL(currentUrl)
+            require(url.protocol == "https" && url.userInfo == null) { "Model downloads require HTTPS" }
+            val conn = (url.openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = false
                 connectTimeout = 15_000
                 readTimeout = 30_000

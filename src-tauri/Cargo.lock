@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "handy"
-version = "0.10.2-seionwon"
+version = "0.10.4-seionwon"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2498,6 +2498,7 @@ dependencies = [
  "rusqlite",
  "rusqlite_migration",
  "rustfft",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2",
@@ -2532,6 +2533,7 @@ dependencies = [
  "webview2-com",
  "whatlang",
  "windows 0.61.3",
+ "windows-sys 0.59.0",
  "winreg 0.55.0",
 ]
 
@@ -6428,9 +6430,9 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tar"
-version = "0.4.44"
+version = "0.4.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d863878d212c87a19c1a610eb53bb01fe12951c0501cf5a0d65f724914a667a"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
 dependencies = [
  "filetime",
  "libc",

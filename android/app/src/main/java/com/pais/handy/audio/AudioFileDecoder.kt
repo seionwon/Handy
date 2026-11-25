@@ -7,6 +7,7 @@ import android.media.MediaFormat
 import android.net.Uri
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.io.InputStream
 import java.nio.ByteOrder
 
 /**
@@ -14,14 +15,42 @@ import java.nio.ByteOrder
  * into 16 kHz mono float PCM suitable for local Whisper transcription.
  */
 object AudioFileDecoder {
+    /**
+     * Most audio held in memory for one file, as bytes of PCM. Another app can
+     * share a file of any length, so decoding stops here instead of exhausting
+     * the heap. About 23 minutes of 48 kHz stereo, or 2 hours of 16 kHz mono.
+     */
+    const val MAX_PCM_BYTES = 256 * 1024 * 1024
+
+    class AudioTooLongException : IllegalArgumentException("Audio file is too long to transcribe")
+
+    /** Reads the whole stream, or throws once it holds more than [limit] bytes. */
+    fun readBounded(stream: InputStream, limit: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = stream.read(buffer)
+            if (read < 0) return out.toByteArray()
+            if (out.size() + read > limit) throw AudioTooLongException()
+            out.write(buffer, 0, read)
+        }
+    }
+
     fun decodeUriToMono16k(context: Context, uri: Uri): FloatArray {
-        // Fast path for standard 16-bit PCM WAV files
-        runCatching {
+        // Fast path for standard 16-bit PCM WAV files. Only a RIFF file is read
+        // whole; anything else goes to the streaming decoder below.
+        val isRiff = runCatching {
             context.contentResolver.openInputStream(uri)?.use { stream ->
-                val bytes = stream.readBytes()
-                if (bytes.size >= 44 && String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF") {
-                    return WavCodec.readWavToMono16k(bytes)
-                }
+                val magic = ByteArray(4)
+                stream.read(magic) == 4 && String(magic, Charsets.US_ASCII) == "RIFF"
+            } ?: false
+        }.getOrDefault(false)
+        if (isRiff) {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
+                readBounded(stream, MAX_PCM_BYTES)
+            }
+            if (bytes != null && bytes.size >= 44) {
+                runCatching { return WavCodec.readWavToMono16k(bytes) }
             }
         }
 
@@ -85,6 +114,7 @@ object AudioFileDecoder {
                                 outBuf.limit(info.offset + info.size)
                                 val chunk = ByteArray(info.size)
                                 outBuf.get(chunk)
+                                if (pcmOut.size() + chunk.size > MAX_PCM_BYTES) throw AudioTooLongException()
                                 pcmOut.write(chunk)
                             }
                             codec.releaseOutputBuffer(outIdx, false)

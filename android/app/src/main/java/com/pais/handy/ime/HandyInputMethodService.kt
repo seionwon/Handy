@@ -1,10 +1,8 @@
 package com.pais.handy.ime
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.os.VibrationEffect
@@ -18,21 +16,12 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import com.pais.handy.MainActivity
 import com.pais.handy.R
-import com.pais.handy.audio.AudioCapture
-import com.pais.handy.audio.WavCodec
 import com.pais.handy.data.EngineMode
 import com.pais.handy.data.HandyLanguages
 import com.pais.handy.data.HandySettingsRepository
-import com.pais.handy.data.HistoryDatabase
 import com.pais.handy.data.ModelCatalog
-import com.pais.handy.data.ModelDownloader
-import com.pais.handy.stt.LlmClient
-import com.pais.handy.stt.SystemSpeechEngine
-import com.pais.handy.stt.TextPostProcessor
-import com.pais.handy.stt.WhisperEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,20 +30,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 class HandyInputMethodService : InputMethodService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private lateinit var settingsRepo: HandySettingsRepository
-    private lateinit var modelDownloader: ModelDownloader
-    private lateinit var historyDb: HistoryDatabase
-    private lateinit var systemSpeech: SystemSpeechEngine
-    private val audioCapture = AudioCapture()
+    private lateinit var dictation: EditorDictation
+    private var acceptsVoice = false
 
     private var engineChip: TextView? = null
     private var langChip: TextView? = null
@@ -64,15 +47,22 @@ class HandyInputMethodService : InputMethodService() {
     private var cancelBtn: Button? = null
 
     private var backspaceJob: Job? = null
-    private var activeRecordingMode: EngineMode? = null
-    private var isBusy: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
         settingsRepo = HandySettingsRepository(this)
-        modelDownloader = ModelDownloader(this)
-        historyDb = HistoryDatabase(this)
-        systemSpeech = SystemSpeechEngine(this)
+        dictation = EditorDictation(
+            this, serviceScope, settingsRepo,
+            onStatus = { message ->
+                if (dictation.recording) tickHaptic()
+                updateRecordingUi(dictation.recording, message ?: idlePrompt())
+            },
+            onPartial = { statusText?.text = it },
+            onInserted = {
+                tickHaptic()
+                updateRecordingUi(false, it)
+            },
+        )
     }
 
     @SuppressLint("ClickableViewAccessibility", "InflateParams")
@@ -86,7 +76,7 @@ class HandyInputMethodService : InputMethodService() {
         cancelBtn = root.findViewById(R.id.ime_cancel_btn)
 
         engineChip?.setOnClickListener {
-            if (activeRecordingMode != null || isBusy) return@setOnClickListener
+            if (dictation.busy) return@setOnClickListener
             val current = settingsRepo.current()
             val next = if (current.engineMode == EngineMode.SYSTEM_INSTANT) {
                 EngineMode.WHISPER_OFFLINE
@@ -98,7 +88,7 @@ class HandyInputMethodService : InputMethodService() {
         }
 
         langChip?.setOnClickListener {
-            if (activeRecordingMode != null || isBusy) return@setOnClickListener
+            if (dictation.busy) return@setOnClickListener
             val cycle = listOf("auto", "ko", "en", "ja", "zh")
             val cur = settingsRepo.current().selectedLanguage
             val next = cycle[(cycle.indexOf(cur) + 1) % cycle.size]
@@ -107,7 +97,7 @@ class HandyInputMethodService : InputMethodService() {
         }
 
         aiChip?.setOnClickListener {
-            if (activeRecordingMode != null || isBusy) return@setOnClickListener
+            if (dictation.busy) return@setOnClickListener
             settingsRepo.update { it.copy(postProcessEnabled = !it.postProcessEnabled) }
             refreshChips()
         }
@@ -120,7 +110,7 @@ class HandyInputMethodService : InputMethodService() {
         }
 
         cancelBtn?.setOnClickListener {
-            cancelActiveDictation()
+            dictation.cancel()
         }
 
         micBtn?.setOnTouchListener { view, event ->
@@ -137,9 +127,13 @@ class HandyInputMethodService : InputMethodService() {
                         startDictation()
                         true
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        if (activeRecordingMode != null) {
-                            stopAndCommitDictation()
+                    MotionEvent.ACTION_CANCEL -> {
+                        dictation.cancel()
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (dictation.recording) {
+                            dictation.stop()
                         }
                         true
                     }
@@ -212,22 +206,34 @@ class HandyInputMethodService : InputMethodService() {
         return root
     }
 
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        dictation.cancel()
+        super.onStartInput(attribute, restarting)
+        acceptsVoice = attribute != null && acceptsDictation(attribute.inputType, attribute.imeOptions)
+    }
+
+    override fun onFinishInput() {
+        acceptsVoice = false
+        dictation.cancel()
+        super.onFinishInput()
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        acceptsVoice = info != null && acceptsDictation(info.inputType, info.imeOptions)
         refreshChips()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         backspaceJob?.cancel()
-        if (activeRecordingMode != null) {
-            cancelActiveDictation()
-        }
+        acceptsVoice = false
+        dictation.cancel()
     }
 
     override fun onDestroy() {
+        dictation.destroy()
         backspaceJob?.cancel()
-        systemSpeech.destroy()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -243,163 +249,19 @@ class HandyInputMethodService : InputMethodService() {
     }
 
     private fun toggleDictation() {
-        if (isBusy) return
-        if (activeRecordingMode != null) {
-            stopAndCommitDictation()
-        } else {
-            startDictation()
-        }
+        if (dictation.recording) dictation.stop() else startDictation()
     }
 
     private fun startDictation() {
-        if (isBusy || activeRecordingMode != null) return
-        val hasMic = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.RECORD_AUDIO,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!hasMic) {
-            statusText?.text = getString(R.string.ime_need_mic)
-            return
-        }
-
-        val settings = settingsRepo.current()
-        if (settings.engineMode == EngineMode.WHISPER_OFFLINE) {
-            val modelFile = modelDownloader.installedModelFile(settings.selectedModelId)
-            if (modelFile == null) {
-                statusText?.text = getString(R.string.ime_need_model)
-                return
-            }
-            audioCapture.start(serviceScope)
-                .onSuccess {
-                    activeRecordingMode = EngineMode.WHISPER_OFFLINE
-                    tickHaptic()
-                    updateRecordingUi(true, getString(R.string.ime_listening))
-                }
-                .onFailure { e ->
-                    statusText?.text = e.message ?: "Microphone error"
-                }
-        } else {
-            activeRecordingMode = EngineMode.SYSTEM_INSTANT
-            tickHaptic()
-            updateRecordingUi(true, getString(R.string.ime_listening))
-            val lang = HandyLanguages.byCode(settings.selectedLanguage)
-            systemSpeech.start(
-                bcp47Language = lang.bcp47,
-                onRmsLevel = {},
-                onPartial = { partial ->
-                    statusText?.text = partial
-                },
-                onResult = { rawText ->
-                    activeRecordingMode = null
-                    handleFinalTranscript(rawText, null, "Instant Speech")
-                },
-                onError = { err ->
-                    activeRecordingMode = null
-                    updateRecordingUi(false, err)
-                },
-            )
-        }
-    }
-
-    private fun stopAndCommitDictation() {
-        val mode = activeRecordingMode ?: return
-        activeRecordingMode = null
-        if (mode == EngineMode.SYSTEM_INSTANT) {
-            systemSpeech.stopListening()
-            updateRecordingUi(false, getString(R.string.ime_transcribing))
-            return
-        }
-
-        isBusy = true
-        updateRecordingUi(false, getString(R.string.ime_transcribing))
-        val settings = settingsRepo.current()
-        val model = ModelCatalog.byId(settings.selectedModelId)
-        val modelFile = modelDownloader.installedModelFile(settings.selectedModelId)
-
-        serviceScope.launch {
-            try {
-                val samples = audioCapture.stopAndGetSamples()
-                if (samples.size < 3200 || modelFile == null) {
-                    isBusy = false
-                    updateRecordingUi(false, idlePrompt())
-                    return@launch
-                }
-                val wavName = "handy-ime-${System.currentTimeMillis()}.wav"
-                val wavFile = File(historyDb.recordingsDir, wavName)
-                withContext(Dispatchers.IO) {
-                    WavCodec.writeWavFile(wavFile, samples)
-                }
-                val raw = WhisperEngine.transcribe(
-                    modelFile = modelFile,
-                    samples = samples,
-                    language = settings.selectedLanguage,
-                    translateToEnglish = settings.translateToEnglish,
-                    customWords = settings.customWords,
-                )
-                isBusy = false
-                handleFinalTranscript(raw, wavName, model?.name ?: "Whisper")
-            } catch (e: Exception) {
-                isBusy = false
-                updateRecordingUi(false, e.message ?: "Transcription failed")
-            }
-        }
-    }
-
-    private fun cancelActiveDictation() {
-        val mode = activeRecordingMode
-        activeRecordingMode = null
-        if (mode == EngineMode.SYSTEM_INSTANT) {
-            systemSpeech.cancel()
-        } else if (mode == EngineMode.WHISPER_OFFLINE) {
-            serviceScope.launch { audioCapture.cancel() }
-        }
-        isBusy = false
-        updateRecordingUi(false, idlePrompt())
-    }
-
-    private fun handleFinalTranscript(rawText: String, audioFileName: String?, engineLabel: String) {
-        val settings = settingsRepo.current()
-        val cleaned = TextPostProcessor.finalizeTranscript(
-            text = rawText,
-            removeFillerWords = settings.removeFillerWords,
-            appendTrailingSpace = false,
-        )
-        if (cleaned.isEmpty()) {
-            updateRecordingUi(false, idlePrompt())
-            return
-        }
-
-        isBusy = true
-        serviceScope.launch {
-            var postProcessed: String? = null
-            if (settings.postProcessEnabled && settings.postProcessApiKey.isNotBlank()) {
-                statusText?.text = getString(R.string.ime_post_processing)
-                postProcessed = LlmClient.postProcess(settings, cleaned).getOrNull()
-            }
-            val outputBase = postProcessed ?: cleaned
-            val finalOutput = if (settings.appendTrailingSpace) "$outputBase " else outputBase
-
-            currentInputConnection?.commitText(finalOutput, 1)
-            tickHaptic()
-
-            val title = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
-            withContext(Dispatchers.IO) {
-                historyDb.insert(
-                    title = title,
-                    audioFileName = audioFileName,
-                    sourceName = null,
-                    language = settings.selectedLanguage,
-                    engineLabel = engineLabel,
-                    transcriptionText = cleaned,
-                    postProcessedText = postProcessed,
-                )
-            }
-            isBusy = false
-            updateRecordingUi(false, outputBase)
-        }
+        val target = currentInputConnection ?: return
+        dictation.start(EditorDictation.Target(
+            isFocused = { acceptsVoice && currentInputConnection === target },
+            insert = { target.commitText(it, 1) },
+        ))
     }
 
     private fun refreshChips() {
+        micBtn?.isEnabled = acceptsVoice
         val s = settingsRepo.current()
         val isKo = Locale.getDefault().language == "ko"
         engineChip?.text = if (s.engineMode == EngineMode.WHISPER_OFFLINE) {
@@ -411,13 +273,14 @@ class HandyInputMethodService : InputMethodService() {
         val lang = HandyLanguages.byCode(s.selectedLanguage)
         langChip?.text = if (isKo) lang.labelKo else lang.labelEn
         aiChip?.text = getString(if (s.postProcessEnabled) R.string.ime_ai_on else R.string.ime_ai_off)
-        if (activeRecordingMode == null && !isBusy) {
+        if (!dictation.busy) {
             micBtn?.text = idlePrompt()
             statusText?.text = idlePrompt()
         }
     }
 
     private fun idlePrompt(): String {
+        if (!acceptsVoice) return getString(R.string.ime_private_field)
         val hold = settingsRepo.current().holdToTalk
         return getString(if (hold) R.string.ime_hold_to_speak else R.string.ime_tap_to_speak)
     }

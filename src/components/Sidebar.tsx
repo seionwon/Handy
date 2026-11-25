@@ -4,14 +4,14 @@ import { Cog, FlaskConical, History, Info, Sparkles, Cpu } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
+import { GeneralSettings } from "./settings/general/GeneralSettings";
 import {
-  GeneralSettings,
   AdvancedSettings,
   HistorySettings,
   AboutSettings,
   PostProcessingSettings,
   ModelsSettings,
-} from "./settings";
+} from "./lazyScreens";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 

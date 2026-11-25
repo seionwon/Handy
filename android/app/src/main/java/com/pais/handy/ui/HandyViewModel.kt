@@ -3,10 +3,12 @@ package com.pais.handy.ui
 import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.PersistableBundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
@@ -70,7 +72,7 @@ data class HandyUiState(
 
 class HandyViewModel(application: Application) : AndroidViewModel(application) {
     val settingsRepo = HandySettingsRepository(application)
-    val modelDownloader = ModelDownloader(application)
+    val modelDownloader = ModelDownloader.get(application)
     private val historyDb = HistoryDatabase(application)
     private val audioCapture = AudioCapture()
     private val systemSpeech = SystemSpeechEngine(application)
@@ -90,7 +92,6 @@ class HandyViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         refreshHistory()
-        refreshImeStatus()
         viewModelScope.launch {
             audioCapture.level.collect { lvl ->
                 if (activeRecordingMode == EngineMode.WHISPER_OFFLINE) {
@@ -368,29 +369,36 @@ class HandyViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun transcribeAudioUri(uri: Uri) {
-        val s = settingsRepo.current()
-        val targetModelId = if (modelDownloader.isInstalled(s.selectedModelId)) {
-            s.selectedModelId
-        } else {
-            modelDownloader.installedIds.value.firstOrNull()
-        }
-        val model = targetModelId?.let { ModelCatalog.byId(it) }
-        val modelFile = targetModelId?.let { modelDownloader.installedModelFile(it) }
-        if (modelFile == null || model == null) {
-            _toast.tryEmit(
-                localized(
-                    "파일 전사에는 오프라인 Whisper 모델이 필요합니다. '모델' 탭에서 다운로드하세요.",
-                    "File transcription requires a downloaded Whisper model in the Models tab.",
-                ),
-            )
-            return
-        }
-
-        val displayName = resolveDisplayName(uri)
-        _ui.update { it.copy(transcribingFileLabel = displayName, errorMessage = null) }
-
         viewModelScope.launch {
+            modelDownloader.awaitInitialScan()
+            val s = settingsRepo.current()
+            val targetModelId = if (modelDownloader.isInstalled(s.selectedModelId)) {
+                s.selectedModelId
+            } else {
+                modelDownloader.installedIds.value.firstOrNull()
+            }
+            val model = targetModelId?.let { ModelCatalog.byId(it) }
+            val modelFile = targetModelId?.let { modelDownloader.installedModelFile(it) }
+            if (modelFile == null || model == null) {
+                _toast.tryEmit(
+                    localized(
+                        "파일 전사에는 오프라인 Whisper 모델이 필요합니다. '모델' 탭에서 다운로드하세요.",
+                        "File transcription requires a downloaded Whisper model in the Models tab.",
+                    ),
+                )
+                return@launch
+            }
+
+            // The URI comes from whichever app shared it. Only content URIs are
+            // files that app was allowed to hand over.
+            if (uri.scheme != ContentResolver.SCHEME_CONTENT) {
+                _toast.tryEmit(localized("이 파일은 열 수 없습니다.", "This file can't be opened."))
+                return@launch
+            }
+
             try {
+                val displayName = resolveDisplayName(uri)
+                _ui.update { it.copy(transcribingFileLabel = displayName, errorMessage = null) }
                 val samples = withContext(Dispatchers.IO) {
                     AudioFileDecoder.decodeUriToMono16k(getApplication(), uri)
                 }
@@ -429,6 +437,10 @@ class HandyViewModel(application: Application) : AndroidViewModel(application) {
                     refreshHistory()
                     _toast.tryEmit(localized("파일 전사가 기록에 저장되었습니다.", "File transcription saved to History."))
                 }
+            } catch (e: AudioFileDecoder.AudioTooLongException) {
+                _toast.tryEmit(localized("파일이 너무 길어 전사할 수 없습니다.", "This file is too long to transcribe."))
+            } catch (e: OutOfMemoryError) {
+                _toast.tryEmit(localized("파일이 너무 길어 전사할 수 없습니다.", "This file is too long to transcribe."))
             } catch (e: Exception) {
                 _toast.tryEmit(
                     localized(
@@ -547,7 +559,12 @@ class HandyViewModel(application: Application) : AndroidViewModel(application) {
     fun copyTextToClipboard(text: String, showToast: Boolean = true) {
         val ctx = getApplication<Application>()
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("Handy Transcript", text))
+        val clip = ClipData.newPlainText("Handy Transcript", text)
+        // Dictation can hold private text: keep it out of the system's clipboard preview.
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
+        }
+        cm.setPrimaryClip(clip)
         if (showToast) {
             _toast.tryEmit(localized("복사되었습니다.", "Copied"))
         }
@@ -612,6 +629,16 @@ class HandyViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 settingsRepo.update { it.copy(engineMode = EngineMode.SYSTEM_INSTANT) }
             }
+        }
+    }
+
+    fun updateSettings(transform: (HandySettingsState) -> HandySettingsState) {
+        try {
+            settingsRepo.update(transform)
+        } catch (_: java.security.GeneralSecurityException) {
+            _toast.tryEmit(localized("보안 저장소에 API 키를 저장할 수 없습니다.", "Could not save the API key in Android Keystore."))
+        } catch (_: java.security.ProviderException) {
+            _toast.tryEmit(localized("보안 저장소를 사용할 수 없습니다.", "Android Keystore is unavailable."))
         }
     }
 

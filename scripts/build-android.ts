@@ -4,151 +4,163 @@ import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
-  readdirSync,
+  mkdirSync,
+  mkdtempSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   rmSync,
-  statSync,
+  writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const androidDir = join(root, "android");
-const debugApkDir = join(androidDir, "app", "build", "outputs", "apk", "debug");
-const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-  version: string;
-};
-const fileName = `Handy-v${pkg.version}.apk`;
-const rootApkPath = join(root, fileName);
-
-const skipGradle = process.argv.includes("--publish-only");
-
-if (!skipGradle) {
-  const gradle = spawnSync("gradle", ["-p", androidDir, "assembleDebug"], {
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (gradle.status !== 0) {
-    process.exit(gradle.status ?? 1);
+const android = join(root, "android");
+const outputs = join(android, "app/build/outputs");
+const version = JSON.parse(
+  readFileSync(join(root, "package.json"), "utf8"),
+).version;
+const fileName = `Handy-v${version}.apk`;
+const fingerprint = readFileSync(
+  join(android, "release-signing.sha256"),
+  "utf8",
+).trim();
+if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
+  throw new Error("Invalid Handy release certificate fingerprint.");
+}
+const expected = process.env.HANDY_ANDROID_SIGNER_SHA256;
+if (
+  expected !== undefined &&
+  expected.replace(/:/g, "").toLowerCase() !== fingerprint
+) {
+  throw new Error(
+    "HANDY_ANDROID_SIGNER_SHA256 differs from the Handy release certificate.",
+  );
+}
+const windows = process.platform === "win32";
+if (!process.argv.includes("--publish-only")) {
+  const signingKeys = [
+    "HANDY_ANDROID_KEYSTORE",
+    "HANDY_ANDROID_STORE_PASSWORD",
+    "HANDY_ANDROID_KEY_ALIAS",
+    "HANDY_ANDROID_KEY_PASSWORD",
+  ];
+  if (signingKeys.some((key) => process.env[key] !== undefined)) {
+    for (const key of signingKeys) {
+      if (!process.env[key])
+        throw new Error(`Missing release signing setting ${key}`);
+    }
   }
+  const result = spawnSync(
+    windows ? "cmd.exe" : "gradle",
+    windows
+      ? ["/d", "/c", "gradle.bat -p android :app:assembleRelease"]
+      : ["-p", "android", ":app:assembleRelease"],
+    { cwd: root, stdio: "inherit" },
+  );
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-function resolveBuiltApk(): {
-  apkPath: string;
-  versionCode: number;
-  removeSourceAfterCopy: boolean;
-} {
-  let versionCode = 1001;
-  const metadataPath = join(debugApkDir, "output-metadata.json");
-  if (existsSync(metadataPath)) {
-    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as {
-      elements?: Array<{ outputFile?: string; versionCode?: number }>;
-    };
-    const first = metadata.elements?.[0];
-    if (first?.versionCode) {
-      versionCode = first.versionCode;
-    }
-    if (first?.outputFile) {
-      const candidate = join(debugApkDir, first.outputFile);
-      if (existsSync(candidate)) {
-        return {
-          apkPath: candidate,
-          versionCode,
-          removeSourceAfterCopy: true,
-        };
-      }
-    }
-  }
-
-  if (existsSync(debugApkDir)) {
-    const apks = readdirSync(debugApkDir)
-      .filter((f) => f.endsWith(".apk"))
-      .map((f) => join(debugApkDir, f))
-      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-    if (apks.length > 0) {
-      return {
-        apkPath: apks[0],
-        versionCode,
-        removeSourceAfterCopy: true,
-      };
-    }
-  }
-
-  if (existsSync(rootApkPath)) {
-    return {
-      apkPath: rootApkPath,
-      versionCode,
-      removeSourceAfterCopy: false,
-    };
-  }
-
-  console.error(`Built APK not found in ${debugApkDir} or ${rootApkPath}`);
-  process.exit(1);
+const release = join(outputs, "apk/release");
+const metadata = JSON.parse(
+  readFileSync(join(release, "output-metadata.json"), "utf8"),
+);
+const item = metadata.elements?.find(
+  (it: { outputFile: string }) => basename(it.outputFile) === fileName,
+);
+if (metadata.variantName !== "release" || !item || item.versionName !== version)
+  throw new Error("Missing matching release APK");
+const listed = resolve(release, item.outputFile);
+if (listed !== join(root, fileName) && listed !== join(release, fileName))
+  throw new Error("Unexpected release APK location");
+const inputRecord = join(release, "package-input.txt");
+let source = listed;
+if (existsSync(inputRecord)) {
+  source = resolve(release, readFileSync(inputRecord, "utf8").trim());
+  if (
+    !source.startsWith(join(android, "app/build") + sep) ||
+    basename(source) !== fileName + ".part"
+  )
+    throw new Error("Unexpected release package input");
 }
-
-const { apkPath, versionCode, removeSourceAfterCopy } = resolveBuiltApk();
-
-// Verify APK signature with apksigner when Android build-tools are present.
-const sdkRoot =
+const sdk =
   process.env.ANDROID_HOME ??
   process.env.ANDROID_SDK_ROOT ??
   "/opt/homebrew/share/android-commandlinetools";
-const buildToolsDir = join(sdkRoot, "build-tools");
-if (existsSync(buildToolsDir)) {
-  const versions = readdirSync(buildToolsDir).sort().reverse();
-  const apksigner = versions
-    .map((v) => join(buildToolsDir, v, "apksigner"))
-    .find((p) => existsSync(p));
-  if (apksigner) {
-    const verify = spawnSync(apksigner, ["verify", "--verbose", apkPath], {
-      stdio: "inherit",
-    });
-    if (verify.status !== 0) {
-      console.error("APK signature verification failed");
-      process.exit(verify.status ?? 1);
-    }
-  }
+const tools = join(sdk, "build-tools");
+const dir = readdirSync(tools)
+  .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+  .find((v) => existsSync(join(tools, v, windows ? "aapt.exe" : "aapt")));
+if (!dir) throw new Error("Android SDK build-tools are required");
+function inspect(command: string, args: string[]) {
+  const sdkBin = join(tools, dir!);
+  const jarSigner = windows && command === "apksigner";
+  const binary = jarSigner
+    ? "java"
+    : join(sdkBin, windows ? command + ".exe" : command);
+  const toolArgs = jarSigner
+    ? ["-jar", join(sdkBin, "lib", "apksigner.jar"), ...args]
+    : args;
+  const result = spawnSync(binary, toolArgs, {
+    encoding: "utf8",
+  });
+  if (result.status !== 0)
+    throw new Error(`${command} could not verify the release APK`);
+  return result.stdout;
 }
 
-// Keep ONLY the single root APK (`Handy-v<version>.apk`) on disk so CodeMemo's
-// Run tab displays exactly one Android APK entry with no duplicates.
-for (const legacyDir of [
-  join(root, "public", "downloads"),
-  join(androidDir, "downloads"),
-  join(root, "dist", "downloads"),
-]) {
-  if (existsSync(legacyDir)) {
-    rmSync(legacyDir, { recursive: true, force: true });
-  }
-}
-
-for (const existing of readdirSync(root)) {
+// Verify the same staged bytes that will become visible to the download hub.
+mkdirSync(outputs, { recursive: true });
+const stage = mkdtempSync(join(outputs, ".handy-release-"));
+try {
+  const apk = join(stage, "package.part");
+  copyFileSync(source, apk);
+  const signature = inspect("apksigner", [
+    "verify",
+    "--verbose",
+    "--print-certs",
+    apk,
+  ]);
+  const signers = [
+    ...signature.matchAll(
+      /^Signer #\d+ certificate SHA-256 digest:\s*([\da-f]+)$/gim,
+    ),
+  ];
   if (
-    existing.startsWith("Handy-") &&
-    existing.endsWith(".apk") &&
-    existing !== fileName
-  ) {
-    rmSync(join(root, existing), { force: true });
-  }
+    signers.length !== 1 ||
+    signers[0][1].toLowerCase() !== fingerprint ||
+    /certificate DN:.*\bCN=Android Debug\b/i.test(signature)
+  )
+    throw new Error("Unexpected APK release signer");
+  const badging = inspect("aapt", ["dump", "badging", apk]);
+  const pkg =
+    /^package: name='com\.pais\.handy' versionCode='(\d+)' versionName='([^']+)'/m.exec(
+      badging,
+    );
+  if (
+    !pkg ||
+    pkg[2] !== version ||
+    Number(pkg[1]) !== item.versionCode ||
+    /^application-debuggable/m.test(badging)
+  )
+    throw new Error("APK is debuggable or has unexpected package metadata");
+  const sha256 = createHash("sha256").update(readFileSync(apk)).digest("hex");
+  const marker = join(stage, "verified-release.json");
+  writeFileSync(
+    marker,
+    JSON.stringify({
+      version,
+      versionCode: item.versionCode,
+      fileName,
+      sha256,
+    }),
+  );
+  // Keep verified web downloads available across local builds without listing a second APK.
+  const verified = join(outputs, "verified-apks");
+  mkdirSync(verified, { recursive: true });
+  renameSync(apk, join(verified, sha256 + ".bin"));
+  renameSync(marker, join(outputs, "verified-release.json"));
+  console.log(`Verified Android release ${fileName} (${sha256})`);
+} finally {
+  rmSync(stage, { recursive: true, force: true });
 }
-
-if (apkPath !== rootApkPath) {
-  copyFileSync(apkPath, rootApkPath);
-}
-
-if (removeSourceAfterCopy && existsSync(debugApkDir)) {
-  for (const existing of readdirSync(debugApkDir)) {
-    if (existing.endsWith(".apk")) {
-      rmSync(join(debugApkDir, existing), { force: true });
-    }
-  }
-}
-
-const bytes = readFileSync(rootApkPath);
-const sha256 = createHash("sha256").update(bytes).digest("hex");
-const sizeBytes = statSync(rootApkPath).size;
-
-console.log(
-  `Published ${fileName} (v${pkg.version}, versionCode=${versionCode}, ${(sizeBytes / 1048576).toFixed(2)} MB, sha256=${sha256.slice(0, 12)}…)`,
-);
-console.log(`  Android APK  : ${rootApkPath}`);
-console.log(`  Download URL : /downloads/${fileName}`);

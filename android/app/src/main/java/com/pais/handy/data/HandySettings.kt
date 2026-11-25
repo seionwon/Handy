@@ -124,6 +124,7 @@ data class HandySettingsState(
     val postProcessProviderId: String = "openai",
     val postProcessBaseUrl: String = "https://api.openai.com/v1",
     val postProcessApiKey: String = "",
+    val postProcessKeyScope: String? = null,
     val postProcessModel: String = "gpt-4o-mini",
     val postProcessPrompt: String = DEFAULT_POST_PROCESS_PROMPT,
 ) {
@@ -145,20 +146,30 @@ class HandySettingsRepository(context: Context) {
     }
 
     init {
+        // The legacy shared key has no trustworthy provider or origin.
+        if (prefs.contains("post_process_api_key")) prefs.edit().remove("post_process_api_key").apply()
         prefs.registerOnSharedPreferenceChangeListener(listener)
     }
 
-    fun current(): HandySettingsState = load()
+    fun current(): HandySettingsState = _state.value
 
-    fun update(transform: (HandySettingsState) -> HandySettingsState) {
-        val next = transform(load())
-        save(next)
-        _state.value = next
+    fun update(transform: (HandySettingsState) -> HandySettingsState) = synchronized(settingsLock) {
+        val previous = load()
+        val next = transform(previous)
+        val scope = credentialScope(next.postProcessProviderId, next.postProcessBaseUrl)
+        val editor = prefs.edit()
+        if (scope != null && scope == previous.postProcessKeyScope && next.postProcessApiKey != previous.postProcessApiKey) {
+            ProviderCredentials.write(editor, scope, next.postProcessApiKey)
+        }
+        save(next, editor)
+        _state.value = load()
     }
 
     private fun load(): HandySettingsState {
         val providerId = prefs.getString("post_process_provider_id", "openai") ?: "openai"
         val preset = LlmProviders.byId(providerId)
+        val baseUrl = prefs.getString("post_process_base_url", preset.defaultBaseUrl) ?: preset.defaultBaseUrl
+        val scope = credentialScope(providerId, baseUrl)
         val rawWords = prefs.getString("custom_words", "") ?: ""
         val customWords = rawWords
             .split("\n")
@@ -179,9 +190,9 @@ class HandySettingsRepository(context: Context) {
             themeMode = ThemeMode.fromId(prefs.getString("theme_mode", ThemeMode.SYSTEM.id)),
             postProcessEnabled = prefs.getBoolean("post_process_enabled", false),
             postProcessProviderId = providerId,
-            postProcessBaseUrl = prefs.getString("post_process_base_url", preset.defaultBaseUrl)
-                ?: preset.defaultBaseUrl,
-            postProcessApiKey = prefs.getString("post_process_api_key", "") ?: "",
+            postProcessBaseUrl = baseUrl,
+            postProcessApiKey = ProviderCredentials.read(prefs, scope),
+            postProcessKeyScope = scope,
             postProcessModel = prefs.getString("post_process_model", preset.defaultModel)
                 ?: preset.defaultModel,
             postProcessPrompt = prefs.getString(
@@ -191,8 +202,8 @@ class HandySettingsRepository(context: Context) {
         )
     }
 
-    private fun save(s: HandySettingsState) {
-        prefs.edit()
+    private fun save(s: HandySettingsState, editor: SharedPreferences.Editor) {
+        editor
             .putString("engine_mode", s.engineMode.id)
             .putString("selected_model_id", s.selectedModelId)
             .putString("selected_language", s.selectedLanguage)
@@ -207,13 +218,13 @@ class HandySettingsRepository(context: Context) {
             .putBoolean("post_process_enabled", s.postProcessEnabled)
             .putString("post_process_provider_id", s.postProcessProviderId)
             .putString("post_process_base_url", s.postProcessBaseUrl)
-            .putString("post_process_api_key", s.postProcessApiKey)
             .putString("post_process_model", s.postProcessModel)
             .putString("post_process_prompt", s.postProcessPrompt)
             .apply()
     }
 
     companion object {
+        private val settingsLock = Any()
         private const val PREFS_NAME = "handy_android_settings"
     }
 }

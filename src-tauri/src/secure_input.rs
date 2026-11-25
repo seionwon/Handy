@@ -216,7 +216,7 @@ mod imp {
     /// (an app quit while holding secure input) or point at the wrong
     /// process (often the responsible parent, or `loginwindow`).
     fn lookup_culprit() -> Option<Culprit> {
-        let out = Command::new("ioreg")
+        let out = Command::new("/usr/sbin/ioreg")
             .args(["-l", "-w", "0"])
             .output()
             .ok()?;
@@ -232,7 +232,7 @@ mod imp {
 
         // `ps -o comm=` returns the full executable path; show just the
         // binary name ("Terminal", not ".../Terminal.app/Contents/MacOS/Terminal")
-        let name = Command::new("ps")
+        let name = Command::new("/bin/ps")
             .args(["-o", "comm=", "-p", &pid.to_string()])
             .output()
             .ok()

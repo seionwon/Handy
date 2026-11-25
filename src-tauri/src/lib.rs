@@ -29,6 +29,7 @@ mod permissions;
 pub mod portable;
 #[cfg(target_os = "linux")]
 mod primary_selection;
+mod provider_credentials;
 #[cfg(target_os = "macos")]
 mod screen_sharing;
 mod secure_input;
@@ -753,6 +754,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_post_process_base_url_setting,
             shortcut::change_post_process_api_format_setting,
             shortcut::change_post_process_api_key_setting,
+            shortcut::has_post_process_api_key,
             shortcut::change_post_process_model_setting,
             shortcut::set_post_process_provider,
             shortcut::fetch_post_process_models,
@@ -982,7 +984,6 @@ pub fn run(cli_args: CliArgs) {
     let mut app = builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(system_languages::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -997,6 +998,12 @@ pub fn run(cli_args: CliArgs) {
         .manage(cli_args.clone())
         .manage(notices::NoticeStore::default())
         .setup(move |app| {
+            #[cfg(all(feature = "updater", not(feature = "disable-updater")))]
+            if !settings::update_checks_forced_disabled() {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.add_capability(tauri::ipc::CapabilityBuilder::new("main-updater")
+                    .window("main").permission("updater:default"))?;
+            }
             #[cfg(target_os = "macos")]
             log::info!("Handy {} started as PID {}; replaced older instances: {:?}", env!("CARGO_PKG_VERSION"), std::process::id(), replaced_instances);
             #[cfg(target_os = "windows")]

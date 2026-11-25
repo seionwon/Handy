@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import i18n from "i18next";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen } from "@tauri-apps/api/event";
 import type {
@@ -45,11 +46,6 @@ interface SettingsStore {
   playTestSound: (soundType: "start" | "stop") => Promise<void>;
   checkCustomSounds: () => Promise<void>;
   setPostProcessProvider: (providerId: string) => Promise<void>;
-  updatePostProcessSetting: (
-    settingType: "base_url" | "api_key" | "model",
-    providerId: string,
-    value: string,
-  ) => Promise<void>;
   updatePostProcessBaseUrl: (
     providerId: string,
     baseUrl: string,
@@ -61,7 +57,8 @@ interface SettingsStore {
   updatePostProcessApiKey: (
     providerId: string,
     apiKey: string,
-  ) => Promise<void>;
+    baseUrl: string,
+  ) => Promise<boolean>;
   updatePostProcessModel: (providerId: string, model: string) => Promise<void>;
   fetchPostProcessModels: (providerId: string) => Promise<string[]>;
   setPostProcessModelOptions: (providerId: string, models: string[]) => void;
@@ -497,36 +494,6 @@ export const useSettingsStore = create<SettingsStore>()(
       }
     },
 
-    // Generic updater for post-processing provider settings
-    updatePostProcessSetting: async (
-      settingType: "base_url" | "api_key" | "model",
-      providerId: string,
-      value: string,
-    ) => {
-      const { setUpdating, refreshSettings } = get();
-      const updateKey = `post_process_${settingType}:${providerId}`;
-
-      setUpdating(updateKey, true);
-
-      try {
-        if (settingType === "base_url") {
-          await commands.changePostProcessBaseUrlSetting(providerId, value);
-        } else if (settingType === "api_key") {
-          await commands.changePostProcessApiKeySetting(providerId, value);
-        } else if (settingType === "model") {
-          await commands.changePostProcessModelSetting(providerId, value);
-        }
-        await refreshSettings();
-      } catch (error) {
-        console.error(
-          `Failed to update post-process ${settingType.replace("_", " ")}:`,
-          error,
-        );
-      } finally {
-        setUpdating(updateKey, false);
-      }
-    },
-
     updatePostProcessBaseUrl: async (providerId, baseUrl) => {
       const { setUpdating, refreshSettings } = get();
       const updateKey = `post_process_base_url:${providerId}`;
@@ -540,7 +507,11 @@ export const useSettingsStore = create<SettingsStore>()(
           baseUrl,
         );
         if (urlResult.status === "error") {
-          console.error("Failed to persist base URL:", urlResult.error);
+          notify({
+            title: i18n.t("settings.postProcessing.api.baseUrl.title"),
+            detail: urlResult.error,
+            level: "error",
+          });
           return;
         }
 
@@ -604,19 +575,49 @@ export const useSettingsStore = create<SettingsStore>()(
       }
     },
 
-    updatePostProcessApiKey: async (providerId, apiKey) => {
-      // Clear cached models when API key changes - user should click refresh after
-      set((state) => ({
-        postProcessModelOptions: {
-          ...state.postProcessModelOptions,
-          [providerId]: [],
-        },
-      }));
-      return get().updatePostProcessSetting("api_key", providerId, apiKey);
+    updatePostProcessApiKey: async (providerId, apiKey, baseUrl) => {
+      const updateKey = `post_process_api_key:${providerId}`;
+      get().setUpdating(updateKey, true);
+      try {
+        const result = await commands.changePostProcessApiKeySetting(
+          providerId,
+          apiKey,
+          baseUrl,
+        );
+        if (result.status === "error") throw new Error(result.error);
+        get().setPostProcessModelOptions(providerId, []);
+        return true;
+      } catch (error) {
+        notify({
+          title: i18n.t("settings.postProcessing.api.apiKey.title"),
+          detail: String(error),
+          level: "error",
+        });
+        return false;
+      } finally {
+        get().setUpdating(updateKey, false);
+      }
     },
 
     updatePostProcessModel: async (providerId, model) => {
-      return get().updatePostProcessSetting("model", providerId, model);
+      const updateKey = `post_process_model:${providerId}`;
+      get().setUpdating(updateKey, true);
+      try {
+        const result = await commands.changePostProcessModelSetting(
+          providerId,
+          model,
+        );
+        if (result.status === "error") throw new Error(result.error);
+        await get().refreshSettings();
+      } catch (error) {
+        notify({
+          title: i18n.t("settings.postProcessing.api.model.title"),
+          detail: String(error),
+          level: "error",
+        });
+      } finally {
+        get().setUpdating(updateKey, false);
+      }
     },
 
     fetchPostProcessModels: async (providerId) => {

@@ -1,7 +1,12 @@
 package com.pais.handy.ui
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -17,8 +22,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -29,22 +36,34 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.pais.handy.R
 import com.pais.handy.ui.HandyViewModel.Companion.localized
 import com.pais.handy.ui.screens.DictateScreen
 import com.pais.handy.ui.screens.HistoryScreen
 import com.pais.handy.ui.screens.ModelsScreen
 import com.pais.handy.ui.screens.SettingsScreen
 import com.pais.handy.ui.theme.HandyTheme
+import kotlinx.coroutines.launch
+
+private val microphoneRequestSaver = Saver<MicrophonePermissionRequest, String>(
+    save = { it.pendingAction?.name },
+    restore = { MicrophonePermissionRequest(MicrophoneAction.valueOf(it)) },
+)
 
 private enum class HandyTab(val icon: ImageVector) {
     DICTATE(Icons.Rounded.Mic),
@@ -69,6 +88,7 @@ fun HandyApp(viewModel: HandyViewModel) {
     val installedIds by viewModel.installedModelIds.collectAsState()
 
     val context = LocalContext.current
+    val activity = LocalActivity.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var currentTab by rememberSaveable { mutableStateOf(HandyTab.DICTATE) }
     var hasMicPermission by remember {
@@ -78,10 +98,41 @@ fun HandyApp(viewModel: HandyViewModel) {
         )
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val micRequest = rememberSaveable(saver = microphoneRequestSaver) { MicrophonePermissionRequest() }
+    val micSettingsHint = stringResource(R.string.mic_settings_hint)
+    val appSettingsLabel = stringResource(R.string.mic_open_app_settings)
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
+        val startRecording = micRequest.finish(granted)
         hasMicPermission = granted
+        if (startRecording && currentTab == HandyTab.DICTATE) {
+            viewModel.startDictation()
+        } else if (!granted && activity != null &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)) {
+            scope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = micSettingsHint,
+                    actionLabel = appSettingsLabel,
+                    duration = SnackbarDuration.Long,
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    val appUri = Uri.fromParts("package", context.packageName, null)
+                    try {
+                        activity.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, appUri))
+                    } catch (_: ActivityNotFoundException) {
+                        snackbarHostState.showSnackbar(micSettingsHint)
+                    }
+                }
+            }
+        }
+    }
+    val requestMicPermission: (MicrophoneAction) -> Unit = { action ->
+        micRequest.request(action) {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -93,7 +144,6 @@ fun HandyApp(viewModel: HandyViewModel) {
         }
     }
 
-    val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(Unit) {
         viewModel.toast.collect { msg ->
             snackbarHostState.showSnackbar(msg)
@@ -107,7 +157,6 @@ fun HandyApp(viewModel: HandyViewModel) {
                     context,
                     Manifest.permission.RECORD_AUDIO,
                 ) == PackageManager.PERMISSION_GRANTED
-                viewModel.refreshImeStatus()
                 viewModel.refreshHistory()
             }
         }
@@ -115,6 +164,12 @@ fun HandyApp(viewModel: HandyViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    if (currentTab == HandyTab.SETTINGS) {
+        LifecycleResumeEffect(viewModel) {
+            viewModel.refreshImeStatus()
+            onPauseOrDispose {}
+        }
+    }
     HandyTheme(themeMode = settings.themeMode) {
         Scaffold(
             topBar = {
@@ -153,7 +208,7 @@ fun HandyApp(viewModel: HandyViewModel) {
                         hasMicPermission = hasMicPermission,
                         installedModelIds = installedIds,
                         onRequestMicPermission = {
-                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            requestMicPermission(if (settings.holdToTalk) MicrophoneAction.GRANT_ONLY else MicrophoneAction.RECORD)
                         },
                         onStartDictation = viewModel::startDictation,
                         onStopDictation = viewModel::stopDictation,
@@ -170,8 +225,6 @@ fun HandyApp(viewModel: HandyViewModel) {
                         onShare = viewModel::shareText,
                         onPolish = viewModel::rerunPostProcessOnLatest,
                         onClear = viewModel::clearLatest,
-                        onOpenImeSettings = viewModel::openImeSettings,
-                        onShowImePicker = viewModel::showImePicker,
                         onGoToModels = { currentTab = HandyTab.MODELS },
                     )
                     HandyTab.HISTORY -> HistoryScreen(
@@ -202,7 +255,9 @@ fun HandyApp(viewModel: HandyViewModel) {
                         settings = settings,
                         imeEnabled = ui.imeEnabled,
                         imeSelected = ui.imeSelected,
-                        onUpdateSettings = viewModel.settingsRepo::update,
+                        hasMicPermission = hasMicPermission,
+                        onRequestMicPermission = { requestMicPermission(MicrophoneAction.GRANT_ONLY) },
+                        onUpdateSettings = viewModel::updateSettings,
                         onSelectLlmProvider = viewModel::selectLlmProvider,
                         onOpenImeSettings = viewModel::openImeSettings,
                         onShowImePicker = viewModel::showImePicker,

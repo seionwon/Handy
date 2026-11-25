@@ -898,9 +898,39 @@ fn send_key_combo_via_xdotool(paste_method: &PasteMethod) -> Result<(), String> 
     Ok(())
 }
 
+/// The script receives every transcript, so it must be the file the user named:
+/// an absolute path (never a `PATH` or working-directory lookup) to a regular
+/// file that other users can't rewrite.
+fn check_external_script(script_path: &str) -> Result<(), String> {
+    let path = std::path::Path::new(script_path);
+    if !path.is_absolute() {
+        return Err(format!(
+            "External script '{}' must be an absolute path",
+            script_path
+        ));
+    }
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("External script '{}' is not readable: {}", script_path, e))?;
+    if !metadata.is_file() {
+        return Err(format!("External script '{}' is not a file", script_path));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o002 != 0 {
+            return Err(format!(
+                "External script '{}' is writable by other users",
+                script_path
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Pastes text by invoking an external script.
 /// The script receives the text to paste as a single argument.
 fn paste_via_external_script(text: &str, script_path: &str) -> Result<(), String> {
+    check_external_script(script_path)?;
     info!("Pasting via external script: {}", script_path);
 
     // Do not capture the script's stdio. Wayland clipboard helpers such as
@@ -1371,5 +1401,31 @@ e.g. 28:1 28:0 means pressing on the Enter button on a standard US keyboard.
             .expect("external script should return without waiting for its child");
         fs::remove_file(script_path).expect("remove external script");
         assert!(result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_script_must_be_absolute_and_not_world_writable() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        assert!(check_external_script("paste.sh").is_err());
+        assert!(check_external_script("./paste.sh").is_err());
+        assert!(check_external_script("/nonexistent/handy-paste.sh").is_err());
+
+        let dir = std::env::temp_dir();
+        assert!(check_external_script(dir.to_str().unwrap()).is_err());
+
+        let script = dir.join(format!("handy-script-check-{}.sh", std::process::id()));
+        fs::write(&script, "#!/bin/sh\n").expect("write script");
+        let mut permissions = fs::metadata(&script).expect("metadata").permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&script, permissions.clone()).expect("chmod");
+        assert!(check_external_script(script.to_str().unwrap()).is_ok());
+
+        permissions.set_mode(0o777);
+        fs::set_permissions(&script, permissions).expect("chmod");
+        assert!(check_external_script(script.to_str().unwrap()).is_err());
+        fs::remove_file(script).expect("remove script");
     }
 }

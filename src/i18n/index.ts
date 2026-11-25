@@ -1,31 +1,24 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { locale } from "@tauri-apps/plugin-os";
+import english from "./locales/en/translation.json";
 import { LANGUAGE_METADATA } from "./languages";
 import { commands } from "@/bindings";
-import {
-  getLanguageDirection,
-  updateDocumentDirection,
-  updateDocumentLanguage,
-} from "@/lib/utils/rtl";
+import { initializeRTL } from "@/lib/utils/rtl";
 
-// Auto-discover translation files using Vite's glob import
-const localeModules = import.meta.glob<{ default: Record<string, unknown> }>(
-  "./locales/*/translation.json",
-  { eager: true },
+// English is available on first render. The other dictionaries ship as local
+// assets that i18next loads when a window first needs the language.
+const localeModules = import.meta.glob<Record<string, unknown>>(
+  ["./locales/*/translation.json", "!./locales/en/translation.json"],
+  { import: "default" },
 );
-
-// Build resources from discovered locale files
-const resources: Record<string, { translation: Record<string, unknown> }> = {};
-for (const [path, module] of Object.entries(localeModules)) {
-  const langCode = path.match(/\.\/locales\/(.+)\/translation\.json/)?.[1];
-  if (langCode) {
-    resources[langCode] = { translation: module.default };
-  }
-}
+const localeCodes = [
+  "en",
+  ...Object.keys(localeModules).map((path) => path.split("/")[2]),
+];
 
 // Build supported languages list from discovered locales + metadata
-export const SUPPORTED_LANGUAGES = Object.keys(resources)
+export const SUPPORTED_LANGUAGES = localeCodes
   .map((code) => {
     const meta = LANGUAGE_METADATA[code];
     if (!meta) {
@@ -87,49 +80,62 @@ export const getSupportedLanguage = (
 
 // Initialize i18n with English as default
 // Language will be synced from settings after init
-i18n.use(initReactI18next).init({
-  resources,
-  lng: "en",
-  fallbackLng: "en",
-  interpolation: {
-    escapeValue: false, // React already escapes values
-  },
-  react: {
-    useSuspense: false, // Disable suspense for SSR compatibility
-  },
-});
+i18n
+  .use({
+    type: "backend",
+    async read(language: string, namespace: string) {
+      if (language === "en" && namespace === "translation") return english;
+      const load = localeModules[`./locales/${language}/${namespace}.json`];
+      if (!load)
+        throw new Error(
+          `Missing bundled translations for ${language}/${namespace}`,
+        );
+      return load();
+    },
+  })
+  .use(initReactI18next)
+  .init({
+    resources: { en: { translation: english } },
+    partialBundledLanguages: true,
+    lng: "en",
+    fallbackLng: "en",
+    interpolation: {
+      escapeValue: false, // React already escapes values
+    },
+    react: {
+      useSuspense: false, // Disable suspense for SSR compatibility
+    },
+  });
 
-// Sync language from app settings
-export const syncLanguageFromSettings = async () => {
+// While a dictionary loads, i18n.language still describes the previous one.
+let requestedLanguage = i18n.language;
+i18n.on("languageChanging", (language) => {
+  requestedLanguage = language;
+});
+i18n.on("languageChanged", initializeRTL);
+
+let latestSettingsRead = 0;
+export const syncLanguageFromSettings = async (
+  settings = commands.getAppSettings(),
+) => {
+  const read = ++latestSettingsRead;
   try {
-    const result = await commands.getAppSettings();
-    if (result.status === "ok" && result.data.app_language) {
-      const supported = getSupportedLanguage(result.data.app_language);
-      if (supported && supported !== i18n.language) {
-        await i18n.changeLanguage(supported);
-      }
-    } else {
-      // Fall back to system locale detection if no saved preference
-      const systemLocale = await locale();
-      const supported = getSupportedLanguage(systemLocale);
-      if (supported && supported !== i18n.language) {
-        await i18n.changeLanguage(supported);
-      }
+    const result = await settings;
+    const saved = result.status === "ok" ? result.data.app_language : undefined;
+    const supported = getSupportedLanguage(saved || (await locale()));
+    if (
+      read === latestSettingsRead &&
+      supported &&
+      (supported !== i18n.language || supported !== requestedLanguage)
+    ) {
+      await i18n.changeLanguage(supported);
     }
   } catch (e) {
     console.warn("Failed to sync language from settings:", e);
   }
 };
 
-// Run language sync on init
-syncLanguageFromSettings();
-
-// Listen for language changes to update HTML dir and lang attributes
-i18n.on("languageChanged", (lng) => {
-  const dir = getLanguageDirection(lng);
-  updateDocumentDirection(dir);
-  updateDocumentLanguage(lng);
-});
+export const initialLanguageReady = syncLanguageFromSettings();
 
 // Re-export RTL utilities for convenience
 export { getLanguageDirection, isRTLLanguage } from "@/lib/utils/rtl";

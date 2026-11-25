@@ -17,6 +17,8 @@ on:
 jobs:
   build-windows-x64:
     name: "Windows x64 (NSIS + MSI)"
+    # The signing certificate belongs to this fork; never run a copy elsewhere.
+    if: ${{ github.repository == 'seionwon/Handy' }}
     runs-on: windows-latest
     permissions:
       contents: read
@@ -50,20 +52,22 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "numeric_version=$numericVersion"
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: windows-fork-x64-v1
           cache-bin: false
 
       - name: Install Vulkan SDK (Windows x64)
-        uses: humbletim/install-vulkan-sdk@v1.2
+        uses: humbletim/install-vulkan-sdk@30ba978f977e81b72d091fc8888feb1fb26f9aff # v1.2
         with:
           version: 1.4.309.0
           cache: true
@@ -105,13 +109,13 @@ jobs:
           Write-Host "CMAKE_PREFIX_PATH=$combined"
 
       - name: Install frontend dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build Windows NSIS installer (Normal + Portable)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          bun run tauri build --bundles nsis --features disable-updater --config src-tauri/tauri.windows-fork.conf.json --ci -- --locked
+          bun run tauri build --bundles nsis --features disable-updater --config src-tauri/tauri.windows-fork.conf.json --ci -- --no-default-features --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Windows MSI installer (numeric MSI ProductVersion)
@@ -130,7 +134,7 @@ jobs:
             }
           } | ConvertTo-Json -Depth 5 | Set-Content -Path $msiConfigPath -Encoding UTF8
           try {
-            bun run tauri build --bundles msi --features disable-updater --config $msiConfigPath --ci -- --locked
+            bun run tauri build --bundles msi --features disable-updater --config $msiConfigPath --ci -- --no-default-features --locked
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
             Remove-Item -Force -ErrorAction SilentlyContinue $msiConfigPath
@@ -143,7 +147,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $libsDir = (Resolve-Path "src-tauri/transcribe-libs").Path
           $env:PATH = "$libsDir;$env:PATH"
-          cargo test --manifest-path src-tauri/Cargo.toml --features disable-updater --lib --release --locked
+          cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --features disable-updater --lib --release --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Audit Windows packages and collect versioned installers
@@ -231,14 +235,12 @@ jobs:
             Copy-Item -Path $pkg.FullName -Destination (Join-Path $outDir $destName) -Force
           }
 
-          $checksumLines = @()
-          foreach ($file in (Get-ChildItem $outDir -File | Sort-Object Name)) {
-            $hash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
-            $checksumLines += "$hash  $($file.Name)"
-          }
-          $checksumLines | Set-Content -Path (Join-Path $outDir "SHA256SUMS.txt") -Encoding UTF8
-          Get-ChildItem $outDir -File | Format-Table Name, Length
-          Get-Content (Join-Path $outDir "SHA256SUMS.txt")
+      - name: Sign and verify Windows installers
+        shell: pwsh
+        env:
+          HANDY_WINDOWS_CERT_PFX: ${{ secrets.HANDY_WINDOWS_CERT_PFX }}
+          HANDY_WINDOWS_CERT_PASSWORD: ${{ secrets.HANDY_WINDOWS_CERT_PASSWORD }}
+        run: ./scripts/ci/sign-windows-installers.ps1 -Directory windows-artifacts
 
       - name: Upload Windows x64 installers
         uses: actions/upload-artifact@v7
@@ -249,7 +251,7 @@ jobs:
 
   build-windows-arm64:
     name: "Windows ARM64 (NSIS + MSI)"
-    if: ${{ inputs.include_arm64 }}
+    if: ${{ inputs.include_arm64 && github.repository == 'seionwon/Handy' }}
     runs-on: windows-11-arm
     permissions:
       contents: read
@@ -280,10 +282,12 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "numeric_version=$($Matches[1])"
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
 
       - name: Add ARM64 Windows target
         run: rustup target add aarch64-pc-windows-msvc
@@ -330,7 +334,7 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "TAURI_WINDOWS_SIGNTOOL_PATH=$($signtool.FullName)"
 
       - name: Install frontend dependencies (ARM64)
-        run: bun install --cpu=arm64
+        run: bun install --cpu=arm64 --frozen-lockfile
 
       - name: Build Windows ARM64 NSIS + MSI
         shell: pwsh
@@ -338,7 +342,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $version = "${{ steps.ver.outputs.version }}"
           $numericVersion = "${{ steps.ver.outputs.numeric_version }}"
-          bun run tauri build --target aarch64-pc-windows-msvc --bundles nsis --features disable-updater --config src-tauri/tauri.windows-fork.conf.json --ci -- --locked
+          bun run tauri build --target aarch64-pc-windows-msvc --bundles nsis --features disable-updater --config src-tauri/tauri.windows-fork.conf.json --ci -- --no-default-features --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $msiConfigPath = "src-tauri/target/tauri.windows-fork-msi.conf.json"
@@ -352,7 +356,7 @@ jobs:
             }
           } | ConvertTo-Json -Depth 5 | Set-Content -Path $msiConfigPath -Encoding UTF8
           try {
-            bun run tauri build --target aarch64-pc-windows-msvc --bundles msi --features disable-updater --config $msiConfigPath --ci -- --locked
+            bun run tauri build --target aarch64-pc-windows-msvc --bundles msi --features disable-updater --config $msiConfigPath --ci -- --no-default-features --locked
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
             Remove-Item -Force -ErrorAction SilentlyContinue $msiConfigPath
@@ -367,6 +371,13 @@ jobs:
           Get-ChildItem (Join-Path $bundleBase "msi") -Filter "*.msi" | ForEach-Object {
             Copy-Item $_.FullName (Join-Path $outDir "Handy_${version}_arm64_en-US.msi") -Force
           }
+
+      - name: Sign and verify Windows installers
+        shell: pwsh
+        env:
+          HANDY_WINDOWS_CERT_PFX: ${{ secrets.HANDY_WINDOWS_CERT_PFX }}
+          HANDY_WINDOWS_CERT_PASSWORD: ${{ secrets.HANDY_WINDOWS_CERT_PASSWORD }}
+        run: ./scripts/ci/sign-windows-installers.ps1 -Directory windows-artifacts-arm64
 
       - name: Upload Windows ARM64 installers
         uses: actions/upload-artifact@v7

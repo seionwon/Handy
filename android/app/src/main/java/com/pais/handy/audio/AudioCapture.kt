@@ -60,13 +60,18 @@ class AudioCapture {
                 "Failed to initialize microphone AudioRecord"
             }
 
+            try {
+                rec.startRecording()
+                check(rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone did not start recording" }
+            } catch (e: RuntimeException) {
+                rec.release()
+                throw e
+            }
             pcmBuffer.reset()
             recorder = rec
             isRecording = true
             _level.value = 0f
             _elapsedMs.value = 0L
-            rec.startRecording()
-
             val startedAt = System.currentTimeMillis()
             captureJob = scope.launch(Dispatchers.IO) {
                 val readChunk = ShortArray(1024)

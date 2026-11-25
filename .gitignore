@@ -60,3 +60,8 @@ android/downloads/
 .codememo-build/
 # CodeMemo (대화 첨부 · 빌드 요청 스풀) — git 에 담지 않는다
 .cc-uploads/
+
+*.keystore
+*.jks
+*.pfx
+*.p12

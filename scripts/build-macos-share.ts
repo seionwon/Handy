@@ -26,6 +26,12 @@ if (args.some((arg) => !["--package-only", "--arm64-only"].includes(arg))) {
     "Usage: bun scripts/build-macos-share.ts [--package-only] [--arm64-only]",
   );
 }
+const installerIdentity = process.env.HANDY_MACOS_INSTALLER_IDENTITY?.trim();
+if (!installerIdentity || installerIdentity === "-") {
+  throw new Error(
+    "Set HANDY_MACOS_INSTALLER_IDENTITY to a Developer ID Installer certificate for the distribution package.",
+  );
+}
 const packageOnly = args.includes("--package-only");
 const arm64Only = args.includes("--arm64-only");
 const target = arm64Only ? "aarch64-apple-darwin" : "universal-apple-darwin";
@@ -111,6 +117,7 @@ if (!packageOnly) {
     JSON.stringify(shareConfig),
     "--ci",
     "--",
+    "--no-default-features",
     "--locked",
   ]);
 }
@@ -223,10 +230,6 @@ try {
     join(staging, "Handy.pkg"),
   ]);
   const archive = join(staging, filename);
-  const installerIdentity = process.env.HANDY_MACOS_INSTALLER_IDENTITY?.trim();
-  if (installerIdentity === "-") {
-    throw new Error("An installer signing identity must be a certificate.");
-  }
   await run([
     "/usr/bin/productbuild",
     "--distribution",
@@ -235,9 +238,30 @@ try {
     resources,
     "--package-path",
     staging,
-    ...(installerIdentity ? ["--sign", installerIdentity] : []),
+    "--sign",
+    installerIdentity,
     archive,
   ]);
+  const signature = Bun.spawnSync(
+    ["/usr/sbin/pkgutil", "--check-signature", archive],
+    {
+      env: { ...process.env, LC_ALL: "C" },
+    },
+  );
+  const details = signature.stdout.toString();
+  const trusted =
+    /Status: signed by (a developer certificate issued by Apple for distribution|a certificate trusted by (?:Mac OS X|macOS))/i.test(
+      details,
+    );
+  if (
+    signature.exitCode !== 0 ||
+    !trusted ||
+    !/1\. Developer ID Installer:/.test(details)
+  ) {
+    throw new Error(
+      "The distribution package requires a valid Developer ID Installer signature.",
+    );
+  }
   await run(["/usr/sbin/pkgutil", "--expand-full", archive, expanded]);
   await run([
     "/usr/bin/codesign",

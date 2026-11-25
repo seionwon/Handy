@@ -2,17 +2,11 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createHash } from "crypto";
-import {
-  createReadStream,
-  existsSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-} from "fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { AddressInfo } from "net";
 import { networkInterfaces } from "os";
-import { basename, join, resolve } from "path";
+import { resolve } from "path";
 
 // This desktop app only needs a local dev server. In particular, never expose
 // Vite's module-fetch WebSocket to the LAN via TAURI_DEV_HOST (GHSA-p9ff-h696-f583).
@@ -27,89 +21,59 @@ interface ResolvedApkInfo {
   downloadPath: string;
 }
 
-// Serve the latest built Android APK with versioned filename (Handy-vX.Y.Z.apk,
-// matching FocusTempo's root + Gradle debug layout) and installable MIME headers
-// in both dev and preview modes.
+// The publisher writes this marker only after checking the release APK and its signer.
 const androidApkHeadersPlugin = (): Plugin => {
-  const debugApkDir = resolve(__dirname, "android/app/build/outputs/apk/debug");
-  const pkgPath = resolve(__dirname, "package.json");
+  const marker = resolve(
+    __dirname,
+    "android/app/build/outputs/verified-release.json",
+  );
+  const version = JSON.parse(
+    readFileSync(resolve(__dirname, "package.json"), "utf8"),
+  ).version as string;
+  const fileName = `Handy-v${version}.apk`;
+  const legacyApk = resolve(__dirname, fileName);
   let cachedMeta: { key: string; json: string } | null = null;
-
-  const readPackageVersion = (): string => {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
-      version: string;
-    };
-    return pkg.version;
-  };
-
+  let verifiedFile = "";
   const resolveLatestApk = (): ResolvedApkInfo | null => {
-    const version = readPackageVersion();
-    const fileName = `Handy-v${version}.apk`;
-    const downloadPath = `/downloads/${fileName}`;
-    const candidates: Array<{
-      path: string;
-      gradleOutputFile: string;
-      versionCode: number;
-    }> = [];
-
-    const metadataPath = join(debugApkDir, "output-metadata.json");
-    if (existsSync(metadataPath)) {
-      try {
-        const meta = JSON.parse(readFileSync(metadataPath, "utf8")) as {
-          elements?: Array<{ outputFile?: string; versionCode?: number }>;
-        };
-        const first = meta.elements?.[0];
-        if (first?.outputFile) {
-          const gradlePath = join(debugApkDir, first.outputFile);
-          if (existsSync(gradlePath)) {
-            candidates.push({
-              path: gradlePath,
-              gradleOutputFile: first.outputFile,
-              versionCode: first.versionCode ?? 1001,
-            });
-          }
-        }
-      } catch {
-        // Ignore malformed metadata and fall back to directory scan.
+    if (!existsSync(marker)) return null;
+    try {
+      const release = JSON.parse(readFileSync(marker, "utf8"));
+      if (
+        release.version !== version ||
+        release.fileName !== fileName ||
+        !Number.isInteger(release.versionCode) ||
+        typeof release.sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(release.sha256)
+      )
+        return null;
+      const snapshot = resolve(
+        __dirname,
+        "android/app/build/outputs/verified-apks",
+        release.sha256 + ".bin",
+      );
+      const apkFile = existsSync(snapshot) ? snapshot : legacyApk;
+      const stat = statSync(apkFile);
+      const stamp = `${stat.ino}:${stat.ctimeMs}:${stat.size}:${release.sha256}`;
+      if (stamp !== verifiedFile) {
+        if (
+          createHash("sha256").update(readFileSync(apkFile)).digest("hex") !==
+          release.sha256
+        )
+          return null;
+        verifiedFile = stamp;
+        cachedMeta = null;
       }
-    }
-
-    if (candidates.length === 0 && existsSync(debugApkDir)) {
-      const debugApks = readdirSync(debugApkDir)
-        .filter((f) => f.endsWith(".apk"))
-        .map((f) => join(debugApkDir, f))
-        .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-      if (debugApks.length > 0) {
-        candidates.push({
-          path: debugApks[0],
-          gradleOutputFile: basename(debugApks[0]),
-          versionCode: 1001,
-        });
-      }
-    }
-
-    const rootApk = resolve(__dirname, fileName);
-    if (existsSync(rootApk)) {
-      candidates.push({
-        path: rootApk,
+      return {
+        apkFile,
+        fileName,
         gradleOutputFile: fileName,
-        versionCode: 1001,
-      });
+        version,
+        versionCode: release.versionCode,
+        downloadPath: `/downloads/${fileName}`,
+      };
+    } catch {
+      return null;
     }
-
-    if (candidates.length === 0) return null;
-    candidates.sort(
-      (a, b) => statSync(b.path).mtimeMs - statSync(a.path).mtimeMs,
-    );
-    const winner = candidates[0];
-    return {
-      apkFile: winner.path,
-      gradleOutputFile: winner.gradleOutputFile,
-      version,
-      versionCode: winner.versionCode,
-      fileName,
-      downloadPath,
-    };
   };
 
   const getApkMetaJson = (info: ResolvedApkInfo): string => {
@@ -172,7 +136,14 @@ const androidApkHeadersPlugin = (): Plugin => {
     next: () => void,
   ) => {
     const rawUrl = req.url ?? "";
-    const pathname = rawUrl.split("?")[0];
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(rawUrl.split("?")[0]);
+    } catch {
+      res.statusCode = 400;
+      res.end();
+      return;
+    }
 
     if (
       pathname === "/downloads/android-apk-meta.json" ||
@@ -200,12 +171,8 @@ const androidApkHeadersPlugin = (): Plugin => {
     ) {
       const info = resolveLatestApk();
       if (info) {
-        const prefix = pathname.slice(
-          0,
-          pathname.length - "/downloads/Handy-Android.apk".length,
-        );
         res.statusCode = 302;
-        res.setHeader("Location", `${prefix}${info.downloadPath}`);
+        res.setHeader("Location", info.fileName);
         res.setHeader("Cache-Control", "no-store");
         res.end();
         return;
@@ -224,13 +191,21 @@ const androidApkHeadersPlugin = (): Plugin => {
       return;
     }
 
-    if (/\.apk$/i.test(pathname)) {
-      const fallbackName = info?.fileName ?? basename(pathname);
-      res.setHeader("Content-Type", "application/vnd.android.package-archive");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${fallbackName}"`,
-      );
+    if (
+      /\.apk(?:\.part)?$/i.test(pathname) ||
+      pathname.includes("/verified-apks/") ||
+      // Local release material is never part of the app or the install page.
+      /^\/release\.local(?:\/|$)/i.test(pathname) ||
+      /\/\.handy-(?:apk-|previous-|release-)/.test(pathname)
+    ) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+    if (pathname.endsWith("/downloads/android-apk-meta.json")) {
+      res.statusCode = 404;
+      res.end();
+      return;
     }
     next();
   };

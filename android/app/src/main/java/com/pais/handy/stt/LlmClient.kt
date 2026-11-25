@@ -2,6 +2,7 @@ package com.pais.handy.stt
 
 import com.pais.handy.data.HandySettingsState
 import com.pais.handy.data.LlmApiFormat
+import com.pais.handy.data.credentialScope
 import com.pais.handy.data.LlmProviders
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -102,6 +103,10 @@ object LlmClient {
                 require(prompt.isNotEmpty()) { "Post-processing prompt is empty" }
 
                 val url = endpointUrl(settings.postProcessBaseUrl, preset.format)
+                val scope = requireNotNull(credentialScope(preset.id, url)) { "Use HTTPS or a loopback HTTP address" }
+                require(settings.postProcessApiKey.isBlank() || scope == settings.postProcessKeyScope) {
+                    "Enter the API key for this server"
+                }
                 val payload = buildRequestPayload(preset.format, model, prompt, transcript)
 
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -131,7 +136,11 @@ object LlmClient {
                     val stream = if (status in 200..299) conn.inputStream else conn.errorStream
                     val responseBody = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
                     if (status !in 200..299) {
-                        throw IllegalStateException("LLM API error ($status): ${responseBody.take(180)}")
+                        // Some proxies echo the submitted key in their error body.
+                        val sentKey = settings.postProcessApiKey.trim()
+                        val detail =
+                            if (sentKey.isEmpty()) responseBody else responseBody.replace(sentKey, "[REDACTED]")
+                        throw IllegalStateException("LLM API error ($status): ${detail.take(180)}")
                     }
                     parseResponseText(preset.format, responseBody)
                         ?: throw IllegalStateException("LLM returned an empty response")

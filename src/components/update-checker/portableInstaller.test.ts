@@ -62,4 +62,21 @@ assert.equal(
   PORTABLE_RELEASES_URL,
 );
 
+// a link outside this project's release assets is never opened
+for (const url of [
+  "https://example.com/Handy_0.9.5_x64-setup.exe",
+  "http://github.com/cjpais/Handy/releases/download/v0.9.5/Handy_0.9.5_x64-setup.exe",
+  "https://github.com/cjpais/Handy.evil.example/releases/download/x.exe",
+  "https://github.com/someone-else/Handy/releases/download/v0.9.5/Handy_0.9.5_x64-setup.exe",
+]) {
+  assert.equal(
+    resolvePortableInstallerUrl(
+      { platforms: { "windows-x86_64-nsis": { url } } },
+      "windows",
+      "x86_64",
+    ),
+    PORTABLE_RELEASES_URL,
+  );
+}
+
 console.log("portableInstaller: all assertions passed");
